@@ -160,7 +160,7 @@
           <div class="terminal-layout">
             <section class="panel"><div class="panel-head"><h2>合约池</h2><select id="asset-filter"><option value="equity">股票</option><option value="">全部</option><option value="index">指数</option><option value="fx">外汇</option><option value="metal">贵金属</option><option value="commodity">大宗商品</option></select></div><div class="panel-body" style="padding-bottom:6px"><label class="sr-only" for="instrument-search">搜索合约</label><input id="instrument-search" type="search" placeholder="搜索代码或名称" autocomplete="off"></div><div class="instrument-list" id="instrument-list"></div></section>
             <section class="panel"><div class="panel-head"><div><h2 id="chart-title">选择合约</h2><div class="muted num" id="chart-meta">等待 OKX 数据</div></div><div class="toolbar"><div class="seg" id="timeframes"><button data-bar="1m">1m</button><button data-bar="5m">5m</button><button data-bar="15m">15m</button><button data-bar="1H">1H</button><button data-bar="4H" class="active">4H</button><button data-bar="1D">1D</button><button data-bar="1W">1W</button></div><span class="chip">VOL + MA20</span></div></div><div class="panel-body"><div class="kline-wrap"><div class="kline" id="kline-chart"></div><div class="chart-mask" id="chart-mask">等待历史 K 线入库</div></div><div class="quote-strip" id="quote-strip"></div></div></section>
-            <section class="panel"><div class="panel-head"><h2>订单流</h2><span class="chip">books5 / trades</span></div><div class="panel-body"><div class="book-grid"><div><h3>买盘</h3><div id="bids"></div></div><div><h3>卖盘</h3><div id="asks"></div></div></div><div class="report-section" style="margin-top:12px"><h3>逐笔成交</h3><div id="trades"></div></div><div class="report-section"><h3>数据时间</h3><div id="market-times" class="muted"></div></div></div></section>
+            <section class="panel"><div class="panel-head"><h2>订单流</h2><span class="chip">五档盘口 / 逐笔成交</span></div><div class="panel-body"><div class="book-grid"><div><h3>买盘</h3><div id="bids"></div></div><div><h3>卖盘</h3><div id="asks"></div></div></div><div class="report-section" style="margin-top:12px"><h3>逐笔成交</h3><div id="trades"></div></div><div class="report-section"><h3>数据时间</h3><div id="market-times" class="muted"></div></div></div></section>
           </div>
         </section>
 
@@ -168,10 +168,10 @@
           <div class="workspace-head"><div class="workspace-title"><h1>实盘工作区</h1><p id="live-mode-copy">正在核对实盘提交状态。</p></div><div class="actions"><span class="status warn" id="private-source">等待私有连接</span><button class="btn" id="refresh-live">刷新订单/持仓</button></div></div>
           <div class="grid two">
             <section class="panel"><div class="panel-head"><h2>风险中心</h2><span class="status" id="risk-state">--</span></div><div class="panel-body"><div class="metric-grid" id="risk-metrics"></div><div class="risk-ledger" id="risk-breakers" style="margin-top:10px"></div></div></section>
-            <section class="panel"><div class="panel-head"><h2>当前持仓</h2><span class="chip">OKX positions</span></div><div class="table-wrap" id="positions"></div></section>
+            <section class="panel"><div class="panel-head"><h2>当前持仓</h2><span class="chip">OKX 持仓</span></div><div class="table-wrap" id="positions"></div></section>
           </div>
           <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>近 30 天实盘分析</h2><span class="chip">真实成交推断 · 开仓/加减仓/平仓/反手</span></div><div class="panel-body" id="trade-analysis"><div class="empty">等待成交数据生成分析</div></div></section>
-          <div class="grid two" style="margin-top:12px"><section class="panel"><div class="panel-head"><h2>活动订单</h2><span class="chip">OKX orders</span></div><div class="table-wrap" id="exchange-orders"></div></section><section class="panel"><div class="panel-head"><h2>成交回报</h2><span class="chip">OKX fills</span></div><div class="table-wrap" id="fills"></div></section></div>
+          <div class="grid two" style="margin-top:12px"><section class="panel"><div class="panel-head"><h2>活动订单</h2><span class="chip">OKX 订单</span></div><div class="table-wrap" id="exchange-orders"></div></section><section class="panel"><div class="panel-head"><h2>成交回报</h2><span class="chip">OKX 成交</span></div><div class="table-wrap" id="fills"></div></section></div>
           <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>新建订单 · 风控预检</h2><span class="status warn">硬门禁</span></div><div class="panel-body"><form id="order-form"><div class="grid equal"><div class="field"><label for="order-account">账户</label><select id="order-account"></select></div><div class="field"><label for="order-inst">合约</label><select id="order-inst"></select></div><div class="field"><label for="order-side">方向</label><select id="order-side"><option value="buy">买入/做多</option><option value="sell">卖出/做空</option></select></div></div><div class="grid equal"><div class="field"><label for="order-type">订单类型</label><select id="order-type"><option value="limit">限价</option><option value="market">市价</option></select></div><div class="field"><label for="order-size">数量（张）</label><input id="order-size" type="number" min="0" step="0.0001" value="1"></div><div class="field"><label for="order-price">价格</label><input id="order-price" type="number" min="0" step="0.0001" placeholder="市价单使用最新价预检"></div></div><div class="grid equal"><div class="field"><label for="order-stop">止损触发价</label><input id="order-stop" type="number" min="0" step="0.0001" placeholder="新开仓必填"></div><div class="field"><label for="order-target">止盈触发价</label><input id="order-target" type="number" min="0" step="0.0001" placeholder="可选"></div></div><label class="check-row" for="order-reduce-only"><input id="order-reduce-only" type="checkbox">只减仓（不增加现有敞口）</label><div class="field"><label for="order-key">幂等键</label><input id="order-key" value="plan-preview-001"></div><div class="actions"><button class="btn" type="button" id="precheck">运行预检</button><button class="btn primary" id="order-submit" type="submit" disabled>核对后提交</button></div></form><div class="decision-box warn" id="risk-check" role="status" style="margin-top:12px">尚未预检</div><div class="danger-note" id="live-mode-note" style="margin-top:12px">正在读取实盘开关；系统不实现任何提现接口。</div></div></section>
         </section>
 
@@ -187,7 +187,7 @@
           <div class="workspace-head"><div class="workspace-title"><h1>账户与设置</h1><p>平台账号独立登录，每个用户绑定自己的 OKX 实盘账户，租户内数据隔离。</p></div><div class="actions"><button class="btn" id="refresh-accounts">刷新账户</button></div></div>
           <div class="settings-grid">
             <section class="panel"><div class="panel-head"><h2>已绑定账户</h2><span class="chip">隔离账户</span></div><div class="panel-body" id="accounts-list"></div></section>
-            <section class="panel" id="bind-account-panel"><div class="panel-head"><h2>绑定 OKX 账户</h2><span class="status warn">凭证加密保存</span></div><div class="panel-body"><form id="account-form"><div class="field"><label>账户名称</label><input id="account-name" required placeholder="Kevin · OKX 实盘"></div><div class="field"><label>环境</label><select id="account-env"><option value="demo">模拟</option><option value="live">实盘</option></select></div><div id="live-credentials" hidden><div class="field"><label>API Key</label><input id="account-api-key" autocomplete="off"></div><div class="field"><label>Secret Key</label><input id="account-secret-key" autocomplete="off" type="password"></div><div class="field"><label>Passphrase</label><input id="account-passphrase" autocomplete="off" type="password"></div></div><button class="btn primary" type="submit" style="width:100%">保存绑定</button></form><div class="danger-note" style="margin-top:12px">建议在 OKX 后台撤销提现权限，只保留读取和交易；当前系统也会在代码层阻断提现能力。</div></div></section>
+            <section class="panel" id="bind-account-panel"><div class="panel-head"><h2>绑定 OKX 账户</h2><span class="status warn">凭证加密保存</span></div><div class="panel-body"><form id="account-form"><div class="field"><label>账户名称</label><input id="account-name" required placeholder="Kevin · OKX 实盘"></div><div class="field"><label>环境</label><select id="account-env"><option value="demo">模拟</option><option value="live">实盘</option></select></div><div id="live-credentials" hidden><div class="field"><label>API 密钥</label><input id="account-api-key" autocomplete="off"></div><div class="field"><label>私钥</label><input id="account-secret-key" autocomplete="off" type="password"></div><div class="field"><label>通行口令</label><input id="account-passphrase" autocomplete="off" type="password"></div></div><button class="btn primary" type="submit" style="width:100%">保存绑定</button></form><div class="danger-note" style="margin-top:12px">建议在 OKX 后台撤销提现权限，只保留读取和交易；当前系统也会在代码层阻断提现能力。</div></div></section>
           </div>
         </section>
       </main>
@@ -232,6 +232,17 @@
     style.textContent = '.opp-plan{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)}.opp-plan div{display:flex;flex-direction:column;gap:2px}.opp-plan span{font-size:11px;color:var(--muted)}.opp-plan b{font-size:12px;color:#dbe4ec}';
     document.head.appendChild(style);
     const dotClass = (stateValue) => stateValue === 'live' || stateValue === 'connected' || stateValue === 'normal' || stateValue === 'live/partial' ? '' : stateValue === 'partial' || stateValue === 'waiting' || stateValue === 'stale' ? 'warn' : 'bad';
+    // 状态值中文化：后端返回英文枚举，前端渲染时统一翻译
+    const ZH = {
+      connected: '已连接', connecting: '连接中', degraded: '异常', disconnected: '未连接', waiting: '等待中', stale: '过期', live: '实时', partial: '部分', normal: '正常', halted: '已停止', restricted: '受限',
+      filled: '已成交', canceled: '已撤销', cancelled: '已撤销', live_order: '挂单中', partially_filled: '部分成交', pending: '待处理', confirmed: '已确认', submitted: '已提交', unknown: '未知', queued: '排队中', running: '运行中', completed: '已完成', failed: '失败', closed: '已关闭',
+      ready: '就绪', blocked: '受阻', watch: '观察', final: '最终', long: '多', short: '空', neutral: '观望',
+      buy: '买', sell: '卖', market: '市价', limit: '限价', swap: '永续', futures: '合约',
+      equity: '股票', index: '指数', fx: '外汇', metal: '贵金属', commodity: '大宗商品',
+      research_only: '仅研究', needs_validation: '待验证', post: '发布', pre: '前值', internal: '内部', moderate: '适中',
+      live_data_live_execution: '实盘数据·实盘执行', live_data_safe_execution_off: '实盘数据·执行关闭', 'okx-ws': 'OKX 实时', 'okx-private-ws': 'OKX 私有实时', 'okx-account-ws': 'OKX 账户实时', 'okx-rest-reconcile': 'OKX 对账',
+    };
+    const zh = (v) => (v !== null && v !== undefined && ZH[String(v)] ? ZH[String(v)] : v);
 
     function showLogin(message = '') {
       document.body.dataset.auth = 'login';
@@ -258,7 +269,7 @@
       $$('.nav-btn').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
       if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
       if (view === 'opportunities') loadOverviewStream();
-      if (view === 'cockpit') { ensureChart(); loadMarketDetail().catch(err => toast(err.message)); }
+      if (view === 'cockpit') { loadOverviewStream(); ensureChart(); loadMarketDetail().catch(err => toast(err.message)); }
       if (view === 'live') loadLive().catch(err => toast(err.message));
       if (view === 'review') loadReview(state.reviewDate || '').catch(err => toast(err.message));
       if (view === 'settings') loadAccounts().catch(err => toast(err.message));
@@ -389,6 +400,33 @@
         return `<button class="instrument ${state.selectedInst === item.instId ? 'active' : ''}" data-inst="${esc(item.instId)}"><div class="instrument-row"><strong>${esc(item.underlying)}</strong><span class="num">${snapshot?.last ? fmt(snapshot.last, Number(snapshot.last) < 10 ? 5 : 2) : '--'}</span></div><div class="instrument-row"><small>${esc(item.instId)}</small><small class="${snapshot?.change24h >= 0 ? 'green' : 'red'}">${snapshot ? signed(snapshot.change24h, 2, '%') : '--'}</small></div></button>`;
       }).join('');
       $$('.instrument').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
+    }
+
+    // 驾驶舱合约列表实时价格更新：根据 instId 增量更新已渲染的价格/涨跌幅 DOM
+    function updateInstrumentPrices(prices) {
+      if (!prices || typeof prices !== 'object') return;
+      // 同步内存快照（供重渲染/搜索用）
+      const byId = new Map((state.marketItems || []).map(item => [item.instId, item]));
+      for (const [instId, p] of Object.entries(prices)) {
+        const existing = byId.get(instId);
+        if (existing) { existing.last = p.last ?? existing.last; existing.change24h = p.change24h ?? existing.change24h; existing.volume24h = p.volume24h ?? existing.volume24h; }
+        else byId.set(instId, { instId, last: p.last, change24h: p.change24h, volume24h: p.volume24h, source: 'okx-ws' });
+      }
+      state.marketItems = [...byId.values()];
+      // 增量更新已渲染列表 DOM（避免整表重绘丢滚动位置）
+      const buttons = document.querySelectorAll('#instrument-list .instrument');
+      buttons.forEach((button) => {
+        const instId = button.dataset.inst;
+        const p = prices[instId];
+        if (!p) return;
+        const priceEl = button.querySelector('.num');
+        const changeEl = button.querySelector('small.green, small.red');
+        if (priceEl && p.last !== undefined && p.last !== null) priceEl.textContent = fmt(p.last, Number(p.last) < 10 ? 5 : 2);
+        if (changeEl && p.change24h !== undefined) {
+          changeEl.textContent = signed(p.change24h, 2, '%');
+          changeEl.className = p.change24h >= 0 ? 'green' : 'red';
+        }
+      });
     }
 
     function selectInstrument(instId, { goCockpit = false } = {}) {
@@ -524,10 +562,10 @@
       $('#latency').textContent = detail.gateway?.latencyMs != null ? `${detail.gateway.latencyMs} ms` : '待测';
       const funding = Number(detail.funding?.fundingRate);
       $('#quote-strip').innerHTML = [['最新', fmt(s.last, digits)], ['买一', fmt(s.bid, digits)], ['卖一', fmt(s.ask, digits)], ['24h变化', signed(s.change24h, 2, '%')], ['24h量', fmt(s.volume24h, 0)], ['资金费', Number.isFinite(funding) ? signed(funding * 100, 4, '%') : '--']].map(([a,b]) => `<div class="quote"><span>${a}</span><strong class="num">${b}</strong></div>`).join('');
-      const rows = (side) => detail.depth?.[side]?.length ? detail.depth[side].map(x => `<div class="book-row num"><span>${fmt(x[0], digits)}</span><span>${fmt(x[1], 2)}</span></div>`).join('') : '<div class="muted">等待 books5</div>';
+      const rows = (side) => detail.depth?.[side]?.length ? detail.depth[side].map(x => `<div class="book-row num"><span>${fmt(x[0], digits)}</span><span>${fmt(x[1], 2)}</span></div>`).join('') : '<div class="muted">等待五档盘口</div>';
       $('#bids').innerHTML = rows('bids');
       $('#asks').innerHTML = rows('asks');
-      $('#trades').innerHTML = detail.trades?.length ? detail.trades.slice(0, 16).map(t => `<div class="trade-row num"><span class="${t.side === 'buy' ? 'green' : 'red'}">${t.side === 'buy' ? '买' : '卖'} ${fmt(t.price, digits)}</span><span>${fmt(t.size, 2)}</span></div>`).join('') : '<div class="muted">等待 trades</div>';
+      $('#trades').innerHTML = detail.trades?.length ? detail.trades.slice(0, 16).map(t => `<div class="trade-row num"><span class="${t.side === 'buy' ? 'green' : 'red'}">${t.side === 'buy' ? '买' : '卖'} ${fmt(t.price, digits)}</span><span>${fmt(t.size, 2)}</span></div>`).join('') : '<div class="muted">等待逐笔成交</div>';
       const sourceTime = detail.depth?.sourceTs || s.sourceTs;
       $('#market-times').innerHTML = `行情时间：${sourceTime ? new Date(Number(sourceTime) || sourceTime).toLocaleString('zh-CN', { hour12:false }) : '--'}<br>盘口源：${esc(detail.depth?.source || 'waiting')}<br>K线源：${esc(detail.candles?.at(-1)?.source || 'waiting')}<br>订阅：${esc((detail.gateway?.subscriptions || []).join('、'))}`;
     }
@@ -544,7 +582,7 @@
       ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');
       $('#risk-breakers').innerHTML = risk.breakers.map(b => {
         const ratio = b.limit ? Math.min(100, Math.abs(Number(b.current || 0) / Number(b.limit || 1) * 100)) : (b.status === 'normal' ? 100 : 0);
-        return `<div class="breaker"><div class="breaker-head"><strong>${esc(b.name)}</strong><span class="status ${b.status === 'normal' ? 'ok' : b.status === 'halted' ? 'bad' : 'warn'}">${esc(b.status)}</span></div><div class="muted" style="margin-top:5px">${esc(b.action)}</div><div class="bar"><span style="width:${ratio}%;background:${b.status === 'normal' ? 'var(--green)' : 'var(--red)'}"></span></div></div>`;
+        return `<div class="breaker"><div class="breaker-head"><strong>${esc(b.name)}</strong><span class="status ${b.status === 'normal' ? 'ok' : b.status === 'halted' ? 'bad' : 'warn'}">${zh(b.status)}</span></div><div class="muted" style="margin-top:5px">${esc(b.action)}</div><div class="bar"><span style="width:${ratio}%;background:${b.status === 'normal' ? 'var(--green)' : 'var(--red)'}"></span></div></div>`;
       }).join('');
     }
 
@@ -614,16 +652,16 @@
       $('#exchange-orders').innerHTML = table(p.exchangeOrders || [], [
         [o => `${esc(o.exchangeOrderId)}<div class="faint">${esc(o.clientOrderId || '')}</div>`, '订单号'],
         [o => esc(o.instId), '合约'],
-        [o => `<span class="${o.side === 'buy' ? 'green' : 'red'}">${o.side === 'buy' ? '买' : '卖'} · ${esc(o.orderType)}</span>`, '方向/类型'],
-        [o => `<span class="status ${o.state === 'filled' ? 'ok' : o.state === 'canceled' ? 'bad' : 'warn'}">${esc(o.state)}</span>`, '状态'],
+        [o => `<span class="${o.side === 'buy' ? 'green' : 'red'}">${zh(o.side)} · ${zh(o.orderType)}</span>`, '方向/类型'],
+        [o => `<span class="status ${o.state === 'filled' ? 'ok' : o.state === 'canceled' ? 'bad' : 'warn'}">${zh(o.state)}</span>`, '状态'],
         [o => `${fmt(o.filledSize, 2)} / ${fmt(o.size, 2)}`, '成交/委托'],
         [o => o.sourceTs ? new Date(Number(o.sourceTs) || o.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间'],
       ], '没有交易所订单');
       $('#positions').innerHTML = table(p.positions || [], [
-        [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'long' ? 'green' : 'red'}">${esc(x.side)}</span>`, '方向'], [x => fmt(Math.abs(x.quantity), 2), '数量'], [x => fmt(x.avgEntryPrice, 4), '开仓均价'], [x => fmt(x.markPrice, 4), '标记价'], [x => `<span class="${x.unrealizedPnl >= 0 ? 'green' : 'red'}">${signed(x.unrealizedPnl, 2)}</span>`, '未实现盈亏']
+        [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'long' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => fmt(Math.abs(x.quantity), 2), '数量'], [x => fmt(x.avgEntryPrice, 4), '开仓均价'], [x => fmt(x.markPrice, 4), '标记价'], [x => `<span class="${x.unrealizedPnl >= 0 ? 'green' : 'red'}">${signed(x.unrealizedPnl, 2)}</span>`, '未实现盈亏']
       ], '当前没有持仓');
       $('#fills').innerHTML = table(p.fills || [], [
-        [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${x.side === 'buy' ? '买' : '卖'}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
+        [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
       ], '暂无成交回报');
       renderTradeAnalysis(p.analysis);
     }
@@ -702,6 +740,8 @@
             renderDecision();
           }
           if (Array.isArray(payload.strategyCouncil) && payload.strategyCouncil.length) ws.strategyCouncil = payload.strategyCouncil;
+          // 驾驶舱合约列表实时价格：增量更新 DOM，不整表重绘（保持滚动/选中状态）
+          if (payload.prices) updateInstrumentPrices(payload.prices);
         } catch { /* 忽略单条坏消息 */ }
       };
       source.onerror = () => { /* EventSource 自动重连 */ };

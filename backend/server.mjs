@@ -196,6 +196,8 @@ async function pushOverview(principal) {
       trigger: item.trigger, source: item.source, recvTs: item.recvTs,
     })),
     strategyCouncil: snapshot.strategyCouncil?.map((item) => ({ instId: item.instId, arbitration: item.arbitration, signals: item.signals?.map((s) => ({ name: s.name, status: s.status, direction: s.direction, score: s.score })) })) || [],
+    // 驾驶舱合约列表实时价格：instId → {last, change24h, volume24h}
+    prices: Object.fromEntries(marketItems.map((item) => [item.instId, { last: item.last, change24h: item.change24h, volume24h: item.volume24h }])),
   };
   for (const [res, client] of overviewClients.entries()) {
     if (client.backpressured) continue;
