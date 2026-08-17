@@ -227,6 +227,10 @@
       return payload;
     };
     const toast = (message) => { const node = $('#toast'); node.textContent = message; node.hidden = false; clearTimeout(node.timer); node.timer = setTimeout(() => node.hidden = true, 3600); };
+    // 机会卡交易计划样式（现价/进场/止损/止盈 4 列）
+    const style = document.createElement('style');
+    style.textContent = '.opp-plan{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)}.opp-plan div{display:flex;flex-direction:column;gap:2px}.opp-plan span{font-size:11px;color:var(--muted)}.opp-plan b{font-size:12px;color:#dbe4ec}';
+    document.head.appendChild(style);
     const dotClass = (stateValue) => stateValue === 'live' || stateValue === 'connected' || stateValue === 'normal' || stateValue === 'live/partial' ? '' : stateValue === 'partial' || stateValue === 'waiting' || stateValue === 'stale' ? 'warn' : 'bad';
 
     function showLogin(message = '') {
@@ -314,18 +318,25 @@
       $('#opportunity-count').textContent = `${items.length} 个候选`;
       $('#opportunity-list').innerHTML = items.length ? items.map(item => {
         const mom = item.momentum;
-        const momTag = mom ? `<span class="chip" title="12月动量排名（${mom.source === 'yahoo-daily-proxy' ? '现货代理' : 'OKX'}）">动量 #${mom.rank}/${mom.total}</span>` : '';
+        const plan = item.plan || {};
+        const dir = item.arbitration?.direction;
+        const isLong = dir === 'long';
+        const dirClass = isLong ? 'green' : 'red';
+        const dirText = isLong ? '做多' : dir === 'short' ? '做空' : '观望';
+        const entry = plan.entryZone ? `${fmt(plan.entryZone[0], 4)} ~ ${fmt(plan.entryZone[1], 4)}` : '—';
+        const stop = plan.stop != null ? fmt(plan.stop, 4) : '—';
+        const target = plan.target1 != null ? fmt(plan.target1, 4) : '—';
+        const momTag = mom ? `<span class="chip">动量 #${mom.rank}/${mom.total}</span>` : '';
         return `
         <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
-          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} · ${esc(item.state)}</strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
-          <div class="opp-meta">
-            <div><span>价格</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
-            <div><span>24h</span><b class="num ${item.change24h >= 0 ? 'green' : 'red'}">${signed(item.change24h, 2, '%')}</b></div>
-            <div><span>成交额</span><b class="num">${fmt(item.volume24h, 0)}</b></div>
-            <div><span>仲裁</span><b>${esc(item.arbitration.label)}</b></div>
+          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} <span class="${dirClass}">${dirText}</span></strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
+          <div class="opp-plan">
+            <div><span>现价</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
+            <div><span>进场</span><b class="num">${entry}</b></div>
+            <div><span>止损</span><b class="num ${isLong ? '' : ''}">${stop}</b></div>
+            <div><span>止盈</span><b class="num">${target}</b></div>
           </div>
-          <div class="opp-meta" style="margin-top:4px">${momTag || '<span class="chip">无现货代理</span>'}</div>
-          <div class="trigger-line"><strong>${esc(item.trigger?.label || '等待触发计算')}</strong><span class="muted">${esc(item.trigger?.blockers?.[0] || '条件已满足')}</span></div>
+          <div class="opp-meta" style="margin-top:4px">${momTag}<span class="chip">${esc(item.arbitration?.reason || item.trigger?.label || '')}</span></div>
         </button>`;
       }).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
       $$('.opp').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
@@ -335,23 +346,35 @@
       const item = (state.workstation.opportunities || []).find(x => x.instId === state.selectedInst) || state.workstation.selected;
       if (!item || !item.arbitration || !item.arbitration.decision) { $('#decision-panel').innerHTML = '<div class="empty">等待机会数据</div>'; return; }
       const final = item.arbitration.decision.startsWith('final');
-      $('#arbiter-state').textContent = item.arbitration.label;
-      $('#arbiter-state').className = `status ${final ? 'ok' : item.arbitration.decision === 'watch' ? 'warn' : 'info'}`;
+      const dir = item.arbitration.direction;
+      const isLong = dir === 'long';
+      const dirText = isLong ? '做多' : dir === 'short' ? '做空' : '观望';
+      $('#arbiter-state').textContent = `${dirText} · ${item.arbitration.reason || ''}`.slice(0, 24);
+      $('#arbiter-state').className = `status ${final ? 'ok' : 'info'}`;
       const p = item.plan || {};
+      const entry = p.entryZone ? p.entryZone.map(x => fmt(x, 4)).join(' ~ ') : '—';
+      const stop = p.stop != null ? fmt(p.stop, 4) : '—';
+      const t1 = p.target1 != null ? fmt(p.target1, 4) : '—';
+      const t2 = p.target2 != null ? fmt(p.target2, 4) : '—';
+      const rr = p.riskReward ? `1R:${fmt(p.riskReward.target1R, 1)} 2R:${fmt(p.riskReward.target2R, 1)}` : '';
+      // 条件清单：已满足(✓) / 未满足(✗)
+      const conditions = (item.signals || []).flatMap(signal => [
+        ...(signal.scoreBasis || []).map(b => ({ text: b, ok: /\+(\d+)/.test(b) && !/\+0/.test(b) })),
+        ...(signal.blockers || []).map(b => ({ text: '未满足：' + b, ok: false })),
+      ]);
       $('#decision-panel').innerHTML = `
-        <div class="decision-box ${final ? 'final' : 'warn'}"><h3>${esc(item.underlying)} · ${esc(item.arbitration.label)}</h3><div class="muted" style="margin-top:6px">${esc(item.arbitration.reason)} · ${esc(item.arbitration.confidenceLabel || '证据完整度')} ${item.arbitration.confidence}%</div><div class="evidence-list">${(item.arbitration.confidenceBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}</div></div>
-        <div class="decision-box"><div class="trigger-line"><strong>${esc(item.trigger?.label || '尚未生成触发距离')}</strong><span>${item.trigger?.blockers?.length ? `${item.trigger.blockers.length} 项未满足` : '条件已满足'}</span></div>${item.trigger?.blockers?.length ? `<ul>${item.trigger.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul>` : '<div class="green" style="margin-top:8px">触发条件无阻塞项</div>'}</div>
-        <div>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)} · ${esc(signal.direction)}</span></div><div class="evidence-list">${(signal.scoreBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}<span>触发距离：${signal.triggerDistancePct === null ? '--' : signed(signal.triggerDistancePct, 2, '%')}</span></div><ul>${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
-        <div class="report-section plan-ticket"><h3>交易计划票据</h3>
-          <div class="plan-row"><span>状态</span><strong>${esc(p.status || '--')}</strong></div>
-          <div class="plan-row"><span>入场区</span><strong class="num">${p.entryZone ? p.entryZone.map(x => fmt(x, 4)).join(' - ') : '--'}</strong></div>
-          <div class="plan-row"><span>止损</span><strong class="num">${p.stop ? fmt(p.stop, 4) : '--'}</strong></div>
-          <div class="plan-row"><span>目标1 / 目标2</span><strong class="num">${p.target1 ? fmt(p.target1, 4) : '--'} / ${p.target2 ? fmt(p.target2, 4) : '--'}</strong></div>
-          <div class="plan-row"><span>R倍数</span><strong>${p.riskReward ? `${fmt(p.riskReward.target1R, 2)}R / ${fmt(p.riskReward.target2R, 2)}R` : '--'}</strong></div>
-          <div class="plan-row"><span>失效条件</span><strong>${esc(p.invalidation || '--')}</strong></div>
-          <div class="plan-row"><span>仓位提示</span><strong>${p.positionHint ? `权益 ${p.positionHint.maxEquityPct}% · 单笔风险 ${p.positionHint.riskPerTradePct}%` : '--'}</strong></div>
+        <div class="decision-box ${final ? 'final' : ''}">
+          <div style="display:flex;justify-content:space-between;align-items:center"><h3>${esc(item.underlying)} · <span class="${isLong ? 'green' : dir === 'short' ? 'red' : ''}" style="font-size:18px">${dirText}</span></h3><span class="chip">${esc(item.arbitration.reason || '')}</span></div>
+          <div class="opp-plan" style="border-top:0;margin-top:10px;padding-top:0">
+            <div><span>现价</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
+            <div><span>进场</span><b class="num">${entry}</b></div>
+            <div><span>止损</span><b class="num">${stop}</b></div>
+            <div><span>止盈1 / 2</span><b class="num">${t1} / ${t2}</b></div>
+          </div>
+          ${rr ? `<div class="muted" style="margin-top:6px">盈亏比 ${esc(rr)}</div>` : ''}
         </div>
-        <div class="actions"><button class="btn primary" id="open-cockpit">打开K线</button><button class="btn" id="copy-to-order">同步到预检</button></div>`;
+        <div class="decision-box"><h3>条件清单</h3><div class="check-row" style="display:grid;gap:4px;margin-top:6px">${conditions.slice(0, 10).map(c => `<div style="display:flex;gap:6px"><span class="${c.ok ? 'green' : 'red'}">${c.ok ? '✓' : '✗'}</span><span class="${c.ok ? '' : 'amber'}">${esc(c.text)}</span></div>`).join('') || '<div class="muted">暂无条件</div>'}</div></div>
+        <div class="decision-box"><h3>信号明细</h3>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)}</span></div><ul style="margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:12px">${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>`;
       $('#open-cockpit').onclick = () => { selectInstrument(item.instId, { goCockpit: true }); };
       $('#copy-to-order').onclick = () => { fillOrderFromPlan(item); navigate('live'); };
     }
@@ -515,7 +538,7 @@
       $('#risk-state').className = `status ${risk.state === 'normal' ? 'ok' : 'warn'}`;
       $('#risk-metrics').innerHTML = [
         ['账户权益', `$${fmt(risk.equity, 2)}`, `可用 $${fmt(risk.available, 2)}`],
-        ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, '含未实现盈亏'],
+        ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, `已实现 $${fmt(risk.todayRealized ?? 0, 2)} · 未实现 $${fmt(risk.todayUnrealized ?? 0, 2)}`],
         ['回撤', `${fmt(risk.drawdownPct, 2)}%`, '15% 限制新开仓'],
         ['持仓/敞口', `${risk.openPositions} / ${fmt(risk.grossExposure * 100, 2)}%`, '单策略上限 40%'],
       ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');

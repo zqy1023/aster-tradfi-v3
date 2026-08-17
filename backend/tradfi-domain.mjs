@@ -320,7 +320,10 @@ export class TradFiDomain {
     const orders = await this.listOrders(principal);
     const accounts = await this.listAccounts(principal);
     const snapshot = this.riskSnapshots.get(accounts[0]?.id) || { source: 'waiting-account-ws', equity: 0, available: 0, todayPnl: 0, drawdownPct: 0, openPositions: 0, grossExposure: 0, updatedAt: null };
-    const todayPnl = snapshot.todayPnl;
+    // 今日盈亏优先用真实成交计算（已实现+未实现），account 事件推送可能缺字段
+    const realized = this.realizedPnlToday();
+    const unrealized = [...this.positions.values()].reduce((sum, p) => sum + Number(p.unrealizedPnl || 0), 0);
+    const todayPnl = realized + unrealized;
     const equity = snapshot.equity;
     const dailyLimit = equity * 0.04;
     // 真实事件：只报告实际存在的状态（账户对账来源 + 最近的拒单/风控审计）
@@ -335,7 +338,7 @@ export class TradFiDomain {
       const firstFail = intent.risk?.checks?.find((check) => !check.passed);
       recentEvents.push({ ts: intent.updatedAt || intent.createdAt, level: 'warn', title: `订单被风控拒绝：${intent.instId}`, detail: firstFail ? `${firstFail.label}：${firstFail.detail}` : '风控未通过' });
     }
-    return { source: snapshot.source, updatedAt: snapshot.updatedAt, mode: 'moderate', state: equity > 0 && Math.abs(todayPnl) >= dailyLimit ? 'halted' : 'normal', equity, available: snapshot.available, todayPnl, dailyLossLimit: -dailyLimit, drawdownPct: snapshot.drawdownPct, maxDrawdownPct: 20, openPositions: snapshot.openPositions, grossExposure: snapshot.grossExposure, limits: [{ name: '单日亏损', current: todayPnl, limit: -dailyLimit, unit: 'USD', state: 'normal' }, { name: '最大回撤', current: snapshot.drawdownPct, limit: 20, unit: '%', state: 'normal' }, { name: '单策略敞口', current: snapshot.grossExposure * 100, limit: 40, unit: '%', state: 'normal' }, { name: '连续亏损', current: snapshot.consecutiveLosses || 0, limit: 5, unit: '笔', state: 'normal' }], recentEvents, orderCount: orders.length };
+    return { source: snapshot.source, updatedAt: snapshot.updatedAt, mode: 'moderate', state: equity > 0 && Math.abs(todayPnl) >= dailyLimit ? 'halted' : 'normal', equity, available: snapshot.available, todayPnl, todayRealized: realized, todayUnrealized: unrealized, dailyLossLimit: -dailyLimit, drawdownPct: snapshot.drawdownPct, maxDrawdownPct: 20, openPositions: snapshot.openPositions, grossExposure: snapshot.grossExposure, limits: [{ name: '单日亏损', current: todayPnl, limit: -dailyLimit, unit: 'USD', state: 'normal' }, { name: '最大回撤', current: snapshot.drawdownPct, limit: 20, unit: '%', state: 'normal' }, { name: '单策略敞口', current: snapshot.grossExposure * 100, limit: 40, unit: '%', state: 'normal' }, { name: '连续亏损', current: snapshot.consecutiveLosses || 0, limit: 5, unit: '笔', state: 'normal' }], recentEvents, orderCount: orders.length };
   }
 
   ingestPrivateEvent(principal, accountId, event) {
@@ -350,7 +353,9 @@ export class TradFiDomain {
       // availEq is the USD-equivalent amount. Summing availBal would mix currencies.
       const available = details.reduce((sum, item) => sum + Number(item.availEq || 0), 0);
       const previous = this.riskSnapshots.get(accountId) || {};
-      const snapshot = { accountId, tenantId: this.tenant(principal), source: source === 'okx-private-ws' ? 'okx-account-ws' : source, equity: Number(row.totalEq || row.adjEq || previous.equity || 0), available, todayPnl: Number(row.uTimePnl || previous.todayPnl || 0), drawdownPct: previous.drawdownPct || 0, openPositions: previous.openPositions || 0, grossExposure: previous.grossExposure || 0, sourceTs: row.uTime || row.ts || null, updatedAt: recvTs, raw: payload };
+      // 今日已实现盈亏 = 当日成交的 realized pnl 累加；未实现盈亏用 OKX uPnl
+      const todayRealized = this.realizedPnlToday();
+      const snapshot = { accountId, tenantId: this.tenant(principal), source: source === 'okx-private-ws' ? 'okx-account-ws' : source, equity: Number(row.totalEq || row.adjEq || previous.equity || 0), available, todayPnl: todayRealized + Number(row.uPnl || row.upl || 0), drawdownPct: previous.drawdownPct || 0, openPositions: previous.openPositions || 0, grossExposure: previous.grossExposure || 0, sourceTs: row.uTime || row.ts || null, updatedAt: recvTs, raw: payload };
       this.riskSnapshots.set(accountId, snapshot);
       this.accountSnapshots.set(accountId, snapshot);
       if (this.repository) this.repository.saveAccountSnapshot(snapshot).catch(() => undefined);
@@ -509,6 +514,19 @@ export class TradFiDomain {
       positions: scoped([...this.positions.values()]).sort((a, b) => a.instId.localeCompare(b.instId)).map(clone),
       analysis,
     };
+  }
+
+  // 今日(北京时间)已实现盈亏：从真实成交的 realized pnl 累加
+  realizedPnlToday() {
+    const beijingDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    let sum = 0;
+    for (const fill of this.exchangeFills.values()) {
+      const ts = Number(fill.sourceTs || fill.recvTs || 0);
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
+      if (d === beijingDate) sum += Number(fill.pnl || 0);
+    }
+    return sum;
   }
 
   // 从真实成交序列推断最近 30 天的 开仓/加减仓/平仓/反手 行为

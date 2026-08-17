@@ -241,7 +241,12 @@ function arbitrate(signals) {
   if (longs.length >= 2 && shorts.length === 0) return { decision: 'final_long', label: '最终做多', direction: 'long', confidence: clamp(55 + longs.length * 12, 0, 92), confidenceLabel: '证据完整度', confidenceBasis: [`基础证据 55`, `${longs.length} 个多头策略同向 +${longs.length * 12}`, '空头冲突 0'], reason: '至少两个策略同向就绪，且无空头冲突' };
   if (shorts.length >= 2 && longs.length === 0) return { decision: 'final_short', label: '最终做空', direction: 'short', confidence: clamp(55 + shorts.length * 12, 0, 92), confidenceLabel: '证据完整度', confidenceBasis: [`基础证据 55`, `${shorts.length} 个空头策略同向 +${shorts.length * 12}`, '多头冲突 0'], reason: '至少两个策略同向就绪，且无多头冲突' };
   if (longs.length && shorts.length) return { decision: 'neutral', label: '观望', direction: 'neutral', confidence: 72, confidenceLabel: '观望证据完整度', confidenceBasis: [`多头就绪 ${longs.length}`, `空头就绪 ${shorts.length}`, '冲突门禁强制观望'], reason: '多空策略同时就绪，系统仲裁为冲突观望' };
-  if (ready.length === 1) return { decision: 'watch', label: '关注', direction: ready[0].direction, confidence: 48, confidenceLabel: '证据完整度', confidenceBasis: ['仅 1 个策略就绪', '缺少第二个同向确认', '不得解释为胜率'], reason: '只有一个策略就绪，等待第二确认' };
+  // 单策略就绪即可给出明确方向与价位（用户需要可执行的方向/进场/止盈止损，而非无意义的"关注/等待"）
+  if (ready.length === 1) {
+    const s = ready[0];
+    const isLong = s.direction === 'long';
+    return { decision: isLong ? 'final_long' : 'final_short', label: isLong ? '做多' : '做空', direction: isLong ? 'long' : 'short', confidence: clamp(50 + s.score * 0.3, 0, 85), confidenceLabel: '规则接近度', confidenceBasis: [`「${s.name}」就绪 ${s.score} 分`, '单一策略触发，方向明确', '得分非胜率'], reason: `「${s.name}」条件满足，方向${isLong ? '做多' : '做空'}` };
+  }
   return { decision: 'wait', label: '观望', direction: 'neutral', confidence: 40, confidenceLabel: '证据完整度', confidenceBasis: ['没有策略达到 ready', '当前分数只表示规则接近程度', '不得解释为胜率'], reason: '没有策略达到可执行门槛' };
 }
 
