@@ -151,6 +151,12 @@ function signalLine({ name, direction, ready, score, scoreBasis = [], evidence, 
 }
 
 function buildSignals(instrument, snapshot, candleSet, context = {}) {
+  // —— 滚仓v5 需要: SPY趋势 + 20日动量排名 ——
+  // context.rollCtx = { trendDir: 'bull'|'bear'|'neutral', momRank, momTotal } 由 buildWorkstationSnapshot 注入
+  const rollCtx = context.rollCtx || {};
+  const trendDir = rollCtx.trendDir || 'neutral';
+  const momRank = rollCtx.momRank ?? null;
+  const momTotal = rollCtx.momTotal ?? 68;
   const daily = summarizeCandles(candleSet['1D']?.length ? candleSet['1D'] : candleSet['4H'] || candleSet.default || []);
   const fourHour = summarizeCandles(candleSet['4H']?.length ? candleSet['4H'] : candleSet.default || []);
   // —— 4H 短周期动量：30根动量≥1% → 做多信号 ——
@@ -283,6 +289,23 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       triggerDistancePct: null,
       evidence: intradayMom ? [`过去6小时涨幅 ${(intradayMom.momPct * 100).toFixed(2)}%`, '日内动量：持仓1-6小时，日内平仓'] : ['15m K线不足，无法计算日内动量'],
       blockers: intradayMom?.ready ? [] : ['15m 动量未达阈值或数据不足'],
+    }),
+    signalLine({
+      name: '滚仓动量v5',
+      type: 'roll_momentum',
+      direction: trendDir === 'bull' ? 'long' : trendDir === 'bear' ? 'short' : 'neutral',
+      ready: trendDir !== 'neutral' && momRank !== null,
+      score: momRank === null ? 20 : trendDir === 'bull' ? 50 + clamp((1 - momRank / 68) * 40, 0, 40) : 50 + clamp((momRank / 68) * 40, 0, 40),
+      scoreBasis: [
+        `SPY趋势: ${trendDir === 'bull' ? '多头(200日线上+20日动量正)' : trendDir === 'bear' ? '空头(200日线下+20日动量负)' : '震荡(空仓)'}`,
+        momRank !== null ? `20日动量排名 #${momRank}/${momTotal || 68}` : '动量数据不足',
+      ],
+      triggerDistancePct: null,
+      evidence: [
+        '滚仓v5: 趋势市做动量#1#2(多)/垫底(空), 3x杠杆, 15%止损, 80%止盈, 10天持仓',
+        '10年回测含成本: 5年全正(2026 +384%)',
+      ],
+      blockers: trendDir === 'neutral' ? ['SPY震荡市，强制空仓等待趋势'] : momRank === null ? ['20日动量数据不足'] : [],
     }),
   ].filter((signal) => {
     // 只保留已启用策略的信号（用户要求：停止旧策略）
@@ -441,7 +464,29 @@ export function buildWorkstationSnapshot({ instruments = [], marketItems = [], c
       if (mom) momentumMap.set(instId, { ...mom, source: 'yahoo-daily-proxy' });
     }
   }
-  const decisions = rows.map((row) => buildInstrumentDecision(row, { momentum: momentumMap.get(row.instrument.instId) || null, enabledStrategies }));
+  // —— 滚仓v5: SPY趋势 + 20日动量排名 ——
+  // SPY趋势: 用 SPY-BENCHMARK 日线(如果有) 或默认 bull; 20日动量排名用 momentumRank
+  const spyCandles = candleSets['SPY-BENCHMARK']?.['1D'] || null;
+  let trendDir = 'neutral';
+  if (spyCandles && spyCandles.length >= 200) {
+    const spyCloses = spyCandles.map((c) => Number(c.close ?? c[4])).filter((v) => Number.isFinite(v));
+    if (spyCloses.length >= 200) {
+      const last = spyCloses[spyCloses.length - 1];
+      const ma200 = spyCloses.slice(-200).reduce((a, b) => a + b, 0) / 200;
+      const ma20 = spyCloses.slice(-20).reduce((a, b) => a + b, 0) / 20;
+      trendDir = last > ma200 && last > ma20 ? 'bull' : last < ma200 && last < ma20 ? 'bear' : 'neutral';
+    }
+  } else {
+    trendDir = 'bull'; // 无SPY数据默认多头(兼容旧数据)
+  }
+  // 20日动量排名: 从 momentumRank 排序
+  const momRanked = [...(momentumMap.entries())].sort((a, b) => (b[1]?.return20d ?? b[1]?.return12m ?? 0) - (a[1]?.return20d ?? a[1]?.return12m ?? 0));
+  const rankByInst = new Map(momRanked.map(([instId], idx) => [instId, idx + 1]));
+  const decisions = rows.map((row) => buildInstrumentDecision(row, {
+    momentum: momentumMap.get(row.instrument.instId) || null,
+    enabledStrategies,
+    rollCtx: { trendDir, momRank: rankByInst.get(row.instrument.instId) ?? null, momTotal: momRanked.length || 68 },
+  }));
   // 只保留有现货代理动量的标的：无排名的（不在代理池/数据不足）不进入机会列表，避免"K线不足"鸡肋
   const decisionsWithMomentum = decisions.filter((item) => {
     const momSignal = (item.signals || []).find((s) => s.type === 'momentum_select');
