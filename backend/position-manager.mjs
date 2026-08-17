@@ -129,6 +129,24 @@ export class PositionManager {
       };
       const result = await this.placeOrder(gateway, intent);
       openedThisRound.add(opp.instId); // 标记本轮已开，后续标的跳过
+      // 自动开单后立即挂止损（用户规则: SNDK 1%/其他 2%，覆盖全量，挂好不动）
+      // 避免新仓裸奔；只有自动开单才挂，已有仓位的手动止损不干预
+      try {
+        const slDist = opp.instId === 'SNDK-USDT-SWAP' ? 0.01 : 0.02;
+        const slPx = arb.direction === 'long' ? price * (1 - slDist) : price * (1 + slDist);
+        const slResult = await this.setProtection(gateway, {
+          instId: opp.instId, side: side === 'long' ? 'sell' : 'buy',
+          slTriggerPx: Math.round(slPx * 100) / 100,
+          size: qty,
+        });
+        this.pendingSlInsts.add(opp.instId); // 标记已挂，后续不再重复
+        actions.push({
+          action: '开仓挂止损', instId: opp.instId,
+          detail: `新仓自动挂止损 ${Math.round(slPx * 100) / 100}（${(slDist * 100).toFixed(0)}% 距离，覆盖 ${qty} 张），挂好不动`,
+        });
+      } catch (slErr) {
+        actions.push({ action: '开仓挂止损失败', instId: opp.instId, detail: `自动挂止损失败：${slErr?.message}，请手动设置止损` });
+      }
       actions.push({
         action: '自动开仓', instId: opp.instId,
         detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，强度分${total.toFixed(0)}（12月动量${momScore.toFixed(0)} + 4H${h4Score.toFixed(0)}），${constraintNote}`,
