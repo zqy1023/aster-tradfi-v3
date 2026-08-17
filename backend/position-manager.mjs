@@ -179,7 +179,14 @@ export class PositionManager {
       if (!gateway || gateway.status !== 'connected') return { gatewayOffline: true };
 
       const positions = [...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0);
-      const algos = await this.getAlgos(gateway).catch((e) => { process.stderr.write(`[仓位管理] getAlgos 失败: ${e?.stack || e}\n`); return []; });
+      // getAlgos 缓存 10s：实时盯仓(3s ticker)下避免每3秒打OKX REST 2次(限流20/2s)
+      const algosCacheAge = this._algosCacheAt ? Date.now() - this._algosCacheAt : Infinity;
+      let algos = this._algosCache || [];
+      if (algosCacheAge > 10_000) {
+        algos = await this.getAlgos(gateway).catch((e) => { process.stderr.write(`[仓位管理] getAlgos 失败: ${e?.stack || e}\n`); return []; });
+        this._algosCache = algos;
+        this._algosCacheAt = Date.now();
+      }
       const actions = [];
 
       for (const pos of positions) {
@@ -196,7 +203,14 @@ export class PositionManager {
         const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
         // —— 持仓持续评估：信号是否仍生效（开仓后不能不管）——
         // 每次评估拉最新信号，失效则自动平仓（附理由）
-        const sig = await this.getSignal(instId).catch(() => null);
+        // 信号缓存 5s：getSignal 内部 buildWorkstation 较重，实时盯仓下避免每3s重复构建
+        const sigCacheAge = this._sigCacheAt ? Date.now() - this._sigCacheAt : Infinity;
+        let sig = this._sigCache || null;
+        if (sigCacheAge > 5_000) {
+          sig = await this.getSignal(instId).catch(() => null);
+          this._sigCache = sig;
+          this._sigCacheAt = Date.now();
+        }
         if (sig) {
           const sigInvalid = sig.decision === 'neutral' || sig.decision === 'wait'
             || (side === 'long' && sig.direction === 'short')

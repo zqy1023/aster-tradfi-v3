@@ -365,7 +365,8 @@ async function pushOverview(principal) {
 
 // 行情消息到达时调度机会页推送（300ms 节流，所有标的合并为一次快照，按客户端 principal 分别生成）
 // 前端合约列表已改为增量更新价格文本（非整表重绘），可承受更高频率
-// 行情驱动仓位管理器：ticker 到达即触发评估（5s 节流），实现动态止损实时调整
+// 行情驱动仓位管理器：ticker 到达即触发评估（3s 节流，实时盯仓模式）
+// 用户要求"实时盯仓模式"(2026-08-17)：价格/信号变化快速响应，不再是15s慢轮询
 let positionTickTimer = null;
 function schedulePositionManagerTick() {
   if (positionTickTimer) return;
@@ -374,7 +375,7 @@ function schedulePositionManagerTick() {
     positionManager.evaluate({ force: true })
       .then((res) => { if (res?.error) process.stderr.write(`[仓位管理] 评估失败: ${res.error}\n`); else if (res?.actions?.length) process.stderr.write(`[仓位管理] 评估动作: ${JSON.stringify(res.actions).slice(0,200)}\n`); })
       .catch((error) => process.stderr.write(`[仓位管理] 评估异常 ${error?.stack || error}\n`));
-  }, 15_000);
+  }, 3_000);
 }
 function scheduleOverviewPush() {
   if (!overviewClients.size) return;
@@ -568,10 +569,10 @@ async function connectAccount(principal, accountId) {
       try {
         domain.setAccountStatus(principal, accountId, { lastSyncAt: event.recvTs });
         domain.ingestPrivateEvent(principal, accountId, event);
-        // 持仓/成交事件到达 → 触发仓位管理器评估（15s 节流）
+        // 持仓/成交事件到达 → 触发仓位管理器评估（实时盯仓模式：force 立即评估）
         const ch = event?.payload?.arg?.channel;
         if (ch === 'positions' || ch === 'orders' || ch === 'fills') {
-          positionManager.evaluate().catch(() => undefined);
+          positionManager.evaluate({ force: true }).catch((error) => process.stderr.write(`[仓位管理] WS事件评估异常 ${error?.message}\n`));
         }
       } catch (error) {
         process.stderr.write(`[private-ws] 处理私有事件异常 ${event?.payload?.arg?.channel || 'unknown'}: ${error?.stack || error}\n`);
