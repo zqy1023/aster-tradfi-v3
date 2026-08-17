@@ -161,6 +161,16 @@ export class OKXPrivateGateway {
   }
 
   // OKX 原生移动止损（追踪止损）：价格创新高后按回撤比例触发，只减仓
+  async listPendingAlgos(instType = 'SWAP') {
+    const types = ['move_order_stop', 'conditional', 'oco', 'trigger'];
+    const rows = await Promise.all(types.map((ordType) => this.privateGet(`/api/v5/trade/orders-algo-pending?ordType=${ordType}&instType=${encodeURIComponent(instType)}`).catch(() => [])));
+    return rows.flat();
+  }
+
+  async listAlgoHistory(instType = 'SWAP') {
+    return this.privateGet(`/api/v5/trade/orders-algo-history?ordType=move_order_stop&state=effective&instType=${encodeURIComponent(instType)}`);
+  }
+
   async setTrailingStop({ instId, side = 'sell', size, callbackRatio = 0.01, activePx = null, posSide = 'net' } = {}) {
     if (!instId || !(Number(size) > 0)) throw new Error('移动止损缺少标的或数量');
     const algo = {

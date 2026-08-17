@@ -203,7 +203,7 @@
   (() => {
     const $ = (q, root = document) => root.querySelector(q);
     const $$ = (q, root = document) => [...root.querySelectorAll(q)];
-    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, candleSeries: null, volSeries: null, maSeries: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, reviewDate: '', reviewCache: null };
+    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, candleSeries: null, volSeries: null, maSeries: null, chartStream: null, privateStream: null, overviewStream: null, currentAlgos: [], user: null, lastPrecheck: null, pendingOrder: null, reviewDate: '', reviewCache: null };
     const icons = {
       radar:'<svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M12 3v3M21 12h-3M12 18v3M6 12H3"/><path d="m12 12 5-5"/></svg>',
       chart:'<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 3-4 3 2 4-7"/></svg>',
@@ -660,8 +660,25 @@
         [o => `${fmt(o.filledSize, 2)} / ${fmt(o.size, 2)}`, '成交/委托'],
         [o => o.sourceTs ? new Date(Number(o.sourceTs) || o.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间'],
       ], '没有交易所订单');
+      const algosByInst = new Map();
+      const algos = (p.algos && p.algos.length) ? p.algos : state.currentAlgos;
+      if (p.algos && p.algos.length) state.currentAlgos = p.algos;
+      for (const algo of algos) {
+        const list = algosByInst.get(algo.instId) || [];
+        list.push(algo); algosByInst.set(algo.instId, list);
+      }
+      const protectionText = (pos) => {
+        const native = (pos.raw?.closeOrderAlgo || [])[0] || {};
+        const algos = algosByInst.get(pos.instId) || [];
+        const trailing = algos.find(a => a.ordType === 'move_order_stop' || a.callbackRatio);
+        const parts = [];
+        if (native.slTriggerPx && Number(native.slTriggerPx)) parts.push(`硬止损 ${native.slTriggerPx}`);
+        if (native.tpTriggerPx && Number(native.tpTriggerPx)) parts.push(`止盈 ${native.tpTriggerPx}`);
+        if (trailing) parts.push(`动态止损 激活${trailing.activePx || '即时'} / 回撤${(Number(trailing.callbackRatio || 0)*100).toFixed(2)}%`);
+        return parts.length ? parts.join('<br>') : '未设置';
+      };
       $('#positions').innerHTML = table(p.positions || [], [
-        [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'long' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => fmt(Math.abs(x.quantity), 2), '数量'], [x => fmt(x.avgEntryPrice, 4), '开仓均价'], [x => fmt(x.markPrice, 4), '标记价'], [x => `<span class="${x.unrealizedPnl >= 0 ? 'green' : 'red'}">${signed(x.unrealizedPnl, 2)}</span>`, '未实现盈亏']
+        [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'long' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => fmt(Math.abs(x.quantity), 2), '数量'], [x => fmt(x.avgEntryPrice, 4), '开仓均价'], [x => fmt(x.markPrice, 4), '标记价'], [x => `<span class="${x.unrealizedPnl >= 0 ? 'green' : 'red'}">${signed(x.unrealizedPnl, 2)}</span>`, '未实现盈亏'], [x => protectionText(x), '保护单']
       ], '当前没有持仓');
       $('#fills').innerHTML = table(p.fills || [], [
         [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
@@ -703,7 +720,11 @@
       if (!$('#order-account').options.length) await loadAccounts();
       if (!$('#order-inst').options.length) $('#order-inst').innerHTML = state.instruments.map(i => `<option value="${esc(i.instId)}">${esc(i.underlying)} · ${esc(i.instId)}</option>`).join('');
       if (state.selectedInst && [...$('#order-inst').options].some(option => option.value === state.selectedInst)) $('#order-inst').value = state.selectedInst;
-      const p = await api('/api/v3/orders');
+      const [p, algoPayload] = await Promise.all([
+        api('/api/v3/orders'),
+        api('/api/v3/positions/algos').catch(() => ({ algos: [] })),
+      ]);
+      p.algos = algoPayload.algos || [];
       renderPrivate(p);
       state.privateStream?.close();
       const source = new EventSource('/api/v3/private/stream');

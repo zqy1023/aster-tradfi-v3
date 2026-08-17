@@ -690,6 +690,21 @@ const server = createServer(async (req, res) => {
       const [data, risk] = await Promise.all([domain.privateTradingData(principal), domain.riskOverview(principal)]);
       json(res, 200, { ...data, orders: data.intents, risk }); return;
     }
+    // 查询已有持仓的算法保护单（动态止损/止盈止损）
+    if (url.pathname === '/api/v3/positions/algos' && req.method === 'GET') {
+      const principal = requirePrincipal(req, res); if (!principal) return;
+      const accounts = await domain.listAccounts(principal);
+      const account = accounts.find((a) => a.environment === 'live');
+      const gateway = account ? accountGateways.get(account.id) : null;
+      if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有连接未就绪' }); return; }
+      const [algos, history] = await Promise.all([
+        gateway.listPendingAlgos('SWAP'),
+        gateway.listAlgoHistory('SWAP').catch(() => []),
+      ]);
+      json(res, 200, { algos, history });
+      return;
+    }
+
     // 为已有持仓挂 OKX 原生移动止损（只减仓）
     if (url.pathname === '/api/v3/positions/trailing-stop' && req.method === 'POST') {
       const principal = requirePrincipal(req, res); if (!principal) return;
