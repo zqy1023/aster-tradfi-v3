@@ -18,8 +18,20 @@ async function api(cookie, path) {
 }
 
 const jar = await login();
-const [orders, risk, ws] = await Promise.all([api(jar, '/api/v3/orders'), api(jar, '/api/v3/risk/overview'), api(jar, '/api/v3/workstation')]);
+const [orders, risk, ws, algoPayload] = await Promise.all([
+  api(jar, '/api/v3/orders'),
+  api(jar, '/api/v3/risk/overview'),
+  api(jar, '/api/v3/workstation'),
+  api(jar, '/api/v3/positions/algos').catch(() => ({ algos: [] })),
+]);
 const positions = orders.positions || [];
+const algos = algoPayload.algos || [];
+const algosByInst = new Map();
+for (const algo of algos) {
+  const list = algosByInst.get(algo.instId) || [];
+  list.push(algo);
+  algosByInst.set(algo.instId, list);
+}
 const now = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
 const equity = Number(risk?.equity || 0);
 const oppByInst = new Map((ws.opportunities || []).map(o => [o.instId, o]));
@@ -69,8 +81,12 @@ if (!positions.length) {
     const entry = Number(p.avgEntryPrice), mark = Number(p.markPrice), qty = Math.abs(Number(p.quantity));
     const upl = Number(p.unrealizedPnl || 0), lev = Number(p.leverage || 1), liq = Number(p.liquidationPrice);
     const raw = p.raw || {};
-    const algo = (raw.closeOrderAlgo || [])[0] || {};
-    const sl = Number(algo.slTriggerPx || 0), tp = Number(algo.tpTriggerPx || 0);
+    const nativeAlgo = (raw.closeOrderAlgo || [])[0] || {};
+    const positionAlgos = algosByInst.get(p.instId) || [];
+    const trailing = positionAlgos.find((a) => a.ordType === 'move_order_stop' || Number(a.callbackRatio) > 0) || null;
+    const conditional = positionAlgos.filter((a) => a.ordType === 'conditional' || Number(a.slTriggerPx) || Number(a.tpTriggerPx));
+    const sl = Number(nativeAlgo.slTriggerPx || conditional.find(a => Number(a.slTriggerPx))?.slTriggerPx || 0);
+    const tp = Number(nativeAlgo.tpTriggerPx || conditional.find(a => Number(a.tpTriggerPx))?.tpTriggerPx || 0);
     const holdMin = Math.round((Date.now() - (Date.parse(p.sourceTs || p.recvTs) || Date.now())) / 60000);
     const pct = entry ? (mark - entry) / entry * 100 * (side === '多' ? 1 : -1) : 0;
 
@@ -135,6 +151,14 @@ if (!positions.length) {
 
     lines.push(`${level} ${p.instId} · ${side} · ${qty} 张`);
     lines.push(`  结论：${verdict}`);
+    lines.push(`  💹 开仓 ${entry.toFixed(2)} → 当前 ${mark.toFixed(2)}（${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%）`);
+    lines.push(`  🛡️ 硬止损 ${sl ? sl.toFixed(2) : '未设置'}${tp ? ` · 止盈 ${tp.toFixed(2)}` : ' · 止盈未设置'}`);
+    if (trailing) {
+      lines.push(`  🔄 动态止损 生效中 · 激活 ${Number(trailing.activePx || 0).toFixed(2)} · 回撤 ${(Number(trailing.callbackRatio || 0) * 100).toFixed(2)}% · ${trailing.sz || qty} 张`);
+    } else {
+      lines.push('  🔄 动态止损 未设置/未读取到');
+    }
+    lines.push(`  ⚠️ 清算 ${liq ? liq.toFixed(2) : '--'} · 距清算 ${distLiq?.toFixed(2) || '--'}%`);
     for (const r of reasons) lines.push(`  · ${r}`);
     lines.push(`  📌 建议：${actions.join('；')}`);
     lines.push('  ────────────────');
