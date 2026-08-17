@@ -68,9 +68,15 @@ const positionManager = new PositionManager({
       id: `MGR${Date.now()}${Math.random().toString(36).slice(2, 8)}`,
       instId, side, orderType: 'market', size: qty, reduceOnly: true,
     };
-    const result = await gateway.placeOrder(intent);
-    domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_reduce', { instId, side, qty, reason: '风险超上限自动减仓', result });
-    return result;
+    const audit = (result) => domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_reduce', { instId, side, qty, reason: '风险超上限自动减仓', result });
+    try {
+      const result = await gateway.placeOrder(intent);
+      audit(result);
+      return result;
+    } catch (error) {
+      audit({ ok: false, error: error?.message || String(error) });
+      throw error;
+    }
   },
   // 开仓执行：市价单（自动开单用）
   placeOrder: async (gateway, intent) => {
@@ -78,19 +84,29 @@ const positionManager = new PositionManager({
     domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_open', { instId: intent.instId, side: intent.side, qty: intent.size, reason: '策略信号final自动开单', result });
     return result;
   },
-  // 机会列表（自动开单信号源）：复用 buildWorkstation 完整构建（含K线就绪），15s硬超时
+  // 机会列表（自动开单信号源）：复用 buildWorkstation 完整构建（含K线就绪），25s硬超时
+  // 修复: 原setTimeout throw在timer回调→uncaughtException崩溃; 超时返回空机会(不中断)
   getOpportunities: async () => {
     const principal = { tenantId: '1', userId: '1', role: 'admin' };
-    const timer = setTimeout(() => { throw new Error('buildWorkstation超时'); }, 15_000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; }, 25_000);
     try {
       const snapshot = await buildWorkstation(principal).catch((e) => { process.stderr.write(`[仓位管理] buildWorkstation失败: ${e?.message}\n`); return { opportunities: [] }; });
+      if (timedOut) { process.stderr.write('[仓位管理] buildWorkstation超时(25s)，本轮跳过\n'); return []; }
       return (snapshot.opportunities || []).filter((o) => o.arbitration?.decision?.startsWith('final'));
     } finally { clearTimeout(timer); }
   },
   // 单个标的当前信号（持仓持续评估用）：从最近快照取该标的仲裁
+  // 性能修复: buildWorkstation 15s+ 太重, 全局快照缓存 15s, 所有持仓共用(原每持仓各自build会堆积超时)
   getSignal: async (instId) => {
     const principal = { tenantId: '1', userId: '1', role: 'admin' };
-    const snapshot = await buildWorkstation(principal).catch(() => null);
+    const cacheAge = globalThis.__wsSnapshotAt ? Date.now() - globalThis.__wsSnapshotAt : Infinity;
+    let snapshot = globalThis.__wsSnapshot;
+    if (cacheAge > 15_000) {
+      snapshot = await buildWorkstation(principal).catch(() => null);
+      globalThis.__wsSnapshot = snapshot;
+      globalThis.__wsSnapshotAt = Date.now();
+    }
     const opp = (snapshot?.opportunities || []).find((o) => o.instId === instId);
     return opp ? {
       decision: opp.arbitration?.decision,

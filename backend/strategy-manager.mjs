@@ -7,16 +7,16 @@
 const DEFAULT_STRATEGIES = [
   {
     key: 'momentum_select',
-    name: '12月动量选股',
+    name: 'Top5月度动量组合',
     style: 'momentum_select',
     assetClass: 'equity',
-    primaryTimeframe: '1D',
-    confirmationTimeframe: '1W',
-    hypothesis: '每月末按过去12个月收益率对全市场美股永续排序，做多动量最强的 Top3-5 并持有到下月。横截面动量是学术最稳健的因子之一，回测年化 73%、Sharpe 1.42（美股5年代理数据）。',
-    entryRule: '每月末：过去12月收益率 Top3-5 标的，次月首个交易日开盘等权买入',
-    exitRule: '月末重新排序换仓；跌破 20 日 EMA 或周线 Donchian55 下沿提前退出',
-    status: 'disabled',
-    evidence: '2021-08~2026-08 美股12标的代理: 年化73.2% Sharpe 1.42, 仅2022年-18%(详见 docs/FACTOR_RESEARCH_20260817.md)',
+    primaryTimeframe: '1M',
+    confirmationTimeframe: '1D',
+    hypothesis: '每月末按过去12个月收益排序，持有Top5，并用20日已实现波动过滤高波标的。可复算回测为年化1.4%、Sharpe0.27、最大回撤13.6%；它不是高收益策略，定位是低频、低风险、可审计的组合基准。',
+    entryRule: '月末排名Top5，且ATR/波动未超过均值1.5倍、流动性与点差合格；等权或波动目标权重，总杠杆不超过1x。',
+    exitRule: '月末调仓时跌出Top5即退出；波动飙升降至半仓；组合回撤超过15%暂停新开仓。',
+    status: 'enabled',
+    evidence: 'scripts/backtest-momentum-portfolio.mjs；2022-08至2026-07，48个月，含0.21%往返成本。',
   },
   {
     key: 'vol_target',
@@ -33,16 +33,29 @@ const DEFAULT_STRATEGIES = [
   },
   {
     key: 'short_momentum',
-    name: '4H短周期动量',
+    name: '4H短周期动量（已停用）',
     style: 'short_momentum',
     assetClass: 'equity',
     primaryTimeframe: '4H',
     confirmationTimeframe: '1D',
-    hypothesis: 'OKX 4H 真实数据回测(2026-07~08, 40天)：30根4H动量(≈5日涨幅)≥1%时做多，持有8根(≈1.3天)，10x杠杆。257笔净+62.5% 胜率65%，三标的全正(KORU+16/SNDK+14/SNXX+32)，成本0.09%→0.2%不敏感。样本短(40天)，按规则接近度上线。',
-    entryRule: '4H收盘：过去30根动量(涨幅)≥1% → 下一根开盘做多；杠杆≤10x',
-    exitRule: '持有8根4H或止损(4H ATR×1.5)或动量转负提前退出；单标的手续费约束：月换手≤20次',
+    hypothesis: '已被重新设计替换：样本仅40天且使用10x杠杆，风险不可接受。',
+    entryRule: '停用。',
+    exitRule: '停用。',
+    status: 'disabled',
+    evidence: '2026-08-17策略审计认定样本不足、收益不可复算，禁止自动实盘。',
+  },
+  {
+    key: 'intraday_momentum',
+    name: '15m日内动量',
+    style: 'intraday_momentum',
+    assetClass: 'equity',
+    primaryTimeframe: '15m',
+    confirmationTimeframe: '4H',
+    hypothesis: '15m动量(24根≈6小时)日内趋势，持仓1-6小时，日内平仓（用户要求日内交易）',
+    entryRule: '24根15m动量≥0.5%做多',
+    exitRule: '日内动量转负或信号失效退出；持仓不超过1个交易日',
     status: 'enabled',
-    evidence: 'OKX 4H回测257笔净+62.5% 胜率65% PF1.24(2026-07~08真实数据, 样本短待积累)',
+    evidence: 'OKX 15m数据240根(≈2.5天)；样本短，仅供信号参考，实盘需手动确认',
   },
 ];
 
@@ -109,18 +122,22 @@ export class StrategyManager {
 
   async setEnabled(principal, key, enabled) {
     if (!this.catalog.has(key)) throw new Error('策略不存在');
-    const row = await this.repository?.upsertStrategy({
-      key,
-      tenantId: this.tenant(principal),
-      name: this.catalog.get(key).name,
-      style: this.catalog.get(key).style,
-      assetClass: this.catalog.get(key).assetClass,
-      primaryTimeframe: this.catalog.get(key).primaryTimeframe,
-      confirmationTimeframe: this.catalog.get(key).confirmationTimeframe,
-      hypothesis: this.catalog.get(key).hypothesis,
-      status: enabled ? 'enabled' : 'disabled',
-      updatedAt: this.clock().toISOString(),
-    }).catch(() => null);
+    const status = enabled ? 'enabled' : 'disabled';
+    const row = this.repository
+      ? await this.repository.upsertStrategy({
+          key,
+          tenantId: this.tenant(principal),
+          name: this.catalog.get(key).name,
+          style: this.catalog.get(key).style,
+          assetClass: this.catalog.get(key).assetClass,
+          primaryTimeframe: this.catalog.get(key).primaryTimeframe,
+          confirmationTimeframe: this.catalog.get(key).confirmationTimeframe,
+          hypothesis: this.catalog.get(key).hypothesis,
+          status,
+          updatedAt: this.clock().toISOString(),
+        })
+      : null;
+    this.catalog.get(key).status = status;
     return { key, enabled, row };
   }
 

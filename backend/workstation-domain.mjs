@@ -165,11 +165,25 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       shortMom = { momPct, ready: momPct >= 0.01 };
     }
   }
+  // —— 15m 日内动量：24根(6小时)涨幅≥0.5% → 日内做多信号（用户要求日内交易）——
+  // 持仓1-6小时，日内平仓；数据源15m(240根≈2.5天)足够算6小时动量
+  const m15 = summarizeCandles(candleSet.default || []);
+  const m15Closes = m15.closes || [];
+  const intradayWin = 24; // 24根15m = 6小时
+  let intradayMom = null;
+  if (m15Closes.length >= intradayWin + 1) {
+    const start = m15Closes[m15Closes.length - 1 - intradayWin];
+    const end = m15Closes[m15Closes.length - 1];
+    if (start > 0) {
+      const momPct = (end - start) / start;
+      intradayMom = { momPct, ready: momPct >= 0.005 }; // 6小时涨幅≥0.5%
+    }
+  }
   const price = finite(snapshot?.last, finite(daily.current?.close, null));
   if (!price || daily.count < 20) {
     return [
       signalLine({
-        name: '12月动量选股',
+        name: 'Top5月度动量组合',
         type: 'momentum_select',
         direction: 'neutral',
         ready: false,
@@ -196,7 +210,7 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
   const rank = mom.rank ?? null;
   const total = mom.total ?? 0;
   const return12m = finite(mom.return12m, null);
-  const momTop = rank !== null && rank <= Math.max(3, Math.ceil(total * 0.3)); // Top3 或前30%
+  const momTop = rank !== null && rank <= 5; // 月度组合只取Top5
   const momScore = rank === null ? 30 : 30 + clamp(Math.round((1 - rank / Math.max(1, total)) * 55), 0, 55);
   // —— 策略 2：波动率目标仓位（ATR% 预测波动，风控层：Sharpe 0.414→0.559 回撤减半）——
   const atrPct = daily.atrPct !== null ? daily.atrPct : (atrValue / price * 100);
@@ -206,10 +220,10 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
   const volReady = atrPct > 0 && targetPos >= 0.4; // 波动不过高才可满仓
   return [
     signalLine({
-      name: '12月动量选股',
+      name: 'Top5月度动量组合',
       type: 'momentum_select',
       direction: momTop ? 'long' : 'neutral',
-      ready: Boolean(momTop && liquidityOk && spreadOk),
+      ready: Boolean(momTop && liquidityOk && spreadOk && volSpike <= 1.5),
       score: momScore,
       scoreBasis: [
         `基础规则 30`,
@@ -220,7 +234,7 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       evidence: [
         return12m !== null ? `过去12月收益 ${(return12m * 100).toFixed(1)}%（${mom.source === 'yahoo-daily-proxy' ? '现货代理' : 'OKX'}数据）` : '12月收益数据不足',
         rank !== null ? `横截面动量排名 ${rank}/${total}` : '不在现货代理池，无法横截面排名',
-        '月度调仓：月末按动量重排 Top3-5（回测年化73% Sharpe 1.42）',
+        '月末调仓Top5；波动超过均值1.5倍禁入（可复算Sharpe0.27，非胜率）',
       ],
       blockers: [
         ...(rank === null ? ['不在现货代理池（Yahoo 5年日线），无法计算 12 月动量'] : []),
@@ -258,6 +272,17 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       triggerDistancePct: null,
       evidence: shortMom ? [`过去${momWin}根4H(≈5日)涨幅 ${(shortMom.momPct * 100).toFixed(2)}%`, '回测: 257笔净+62.5% 胜率65% 杠杆10x(样本短40天)'] : ['4H K线不足，无法计算短周期动量'],
       blockers: shortMom?.ready ? [] : ['4H 动量未达阈值或数据不足'],
+    }),
+    signalLine({
+      name: '15m日内动量',
+      type: 'intraday_momentum',
+      direction: 'long',
+      ready: Boolean(intradayMom?.ready),
+      score: intradayMom ? 30 + clamp(Math.round(intradayMom.momPct * 2000), 0, 60) : 20,
+      scoreBasis: intradayMom ? [`24根15m(6小时)动量 ${(intradayMom.momPct * 100).toFixed(2)}% ${intradayMom.ready ? '≥0.5% 达标' : '未达0.5%阈值'}`] : ['15m K线不足24根'],
+      triggerDistancePct: null,
+      evidence: intradayMom ? [`过去6小时涨幅 ${(intradayMom.momPct * 100).toFixed(2)}%`, '日内动量：持仓1-6小时，日内平仓'] : ['15m K线不足，无法计算日内动量'],
+      blockers: intradayMom?.ready ? [] : ['15m 动量未达阈值或数据不足'],
     }),
   ].filter((signal) => {
     // 只保留已启用策略的信号（用户要求：停止旧策略）

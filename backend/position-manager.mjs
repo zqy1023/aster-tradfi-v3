@@ -24,6 +24,8 @@ export class PositionManager {
     this.clock = clock;
     this.onNotify = onNotify;
     this.lastRun = 0;
+    this.consecutiveErrors = 0;
+    this.errorHaltedUntil = 0;
     this.minIntervalMs = 15_000; // 同一持仓 15s 内不重复评估
     this.peakPrices = new Map();      // instId → {high, at} 持仓期间最高价（动态止损已弃用，保留结构）
     this.cooldowns = new Map();       // instId → 平仓时间戳（30分钟冷却）
@@ -48,7 +50,7 @@ export class PositionManager {
     const scored = (opportunities || [])
       .map((opp) => {
         const mom = opp.momentum;
-        const sm = (opp.signals || []).find((s) => s.type === 'short_momentum');
+        const sm = (opp.signals || []).find((s) => s.type === 'momentum_select');
         // 动量排名分位: rank 1/68 → 98.5分; rank 12/68 → 82.4分
         const momScore = mom?.rank && mom?.total ? (1 - mom.rank / mom.total) * 100 : 0;
         const h4Score = sm ? sm.score : 0;                                     // 4H动量分
@@ -168,6 +170,7 @@ export class PositionManager {
     const now = Date.now();
     if (!force && now - this.lastRun < this.minIntervalMs) return { skipped: true };
     this.lastRun = now;
+    if (now < this.errorHaltedUntil) return { halted: true, retryAt: new Date(this.errorHaltedUntil).toISOString() };
     try {
       // 直接遍历内存中已连接的实盘账户（避免硬编码 principal）
       let account = null;
@@ -177,6 +180,8 @@ export class PositionManager {
       if (!account) return { noAccount: true };
       const gateway = this.getGateway(account.id);
       if (!gateway || gateway.status !== 'connected') return { gatewayOffline: true };
+      this.consecutiveErrors = 0;
+      this.errorHaltedUntil = 0;
 
       const positions = [...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0);
       // getAlgos 缓存 10s：实时盯仓(3s ticker)下避免每3秒打OKX REST 2次(限流20/2s)
@@ -222,15 +227,6 @@ export class PositionManager {
             continue; // 已平仓，跳过后续规则
           }
         }
-        // —— 4H 动量转负检测（short_momentum 退出规则）——
-        // 持仓期间 30 根 4H 动量转负 → 趋势破坏，自动平仓
-        const h4Mom = await this.getH4Momentum(instId).catch(() => null);
-        if (h4Mom !== null && h4Mom < 0) {
-          await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty });
-          this.cooldowns.set(instId, Date.now());
-          actions.push({ action: '动量转负平仓', instId, detail: `30根4H动量转负（${(h4Mom * 100).toFixed(2)}%），趋势破坏，自动平 ${qty} 张` });
-          continue;
-        }
         const lossPerUnit = hardSl ? Math.abs(entry - Number(hardSl.slTriggerPx)) : mark * 0.02;
         const curRiskPct = equity ? (lossPerUnit * qty) / equity * 100 : 0;
         const targetRiskPct = 2 * (conv?.mult || 1);
@@ -256,7 +252,7 @@ export class PositionManager {
           const targetQty = equity * targetRiskPct / 100 / lossPerUnit;   // 目标张数(风险=上限)
           const reduceQty = Math.max(0, qty - targetQty);
           if (reduceQty > 0.05) {
-            await this.reducePosition(gateway, { instId, side, qty: reduceQty });
+            await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty: reduceQty });
             actions.push({
               action: '自动减仓',
               instId,
@@ -274,7 +270,7 @@ export class PositionManager {
         try {
           const snap = await this.getOpportunities(account);
           const oppInfo = (snap || []).find((x) => x.instId === instId);
-          h4Score = (oppInfo?.signals || []).find((s) => s.type === 'short_momentum')?.score ?? 50;
+          h4Score = (oppInfo?.signals || []).find((s) => s.type === 'momentum_select')?.score ?? 50;
         } catch { /* 保持默认 */ }
         const momRank = sigNow?.momentum?.rank ?? null;
         const momTotal = sigNow?.momentum?.total ?? 68;
@@ -336,6 +332,11 @@ export class PositionManager {
       }
       return { positions: positions.length, actions };
     } catch (error) {
+      this.consecutiveErrors += 1;
+      if (this.consecutiveErrors >= 5) {
+        this.errorHaltedUntil = Date.now() + 60_000;
+        process.stderr.write('[仓位管理] 连续失败5次，熔断60秒: ' + error.message + '\n');
+      }
       return { error: error.message };
     }
   }
