@@ -385,9 +385,10 @@
           ${rr ? `<div class="muted" style="margin-top:6px">盈亏比 ${esc(rr)}</div>` : ''}
         </div>
         <div class="decision-box"><h3>条件清单</h3><div class="check-row" style="display:grid;gap:4px;margin-top:6px">${conditions.slice(0, 10).map(c => `<div style="display:flex;gap:6px"><span class="${c.ok ? 'green' : 'red'}">${c.ok ? '✓' : '✗'}</span><span class="${c.ok ? '' : 'amber'}">${esc(c.text)}</span></div>`).join('') || '<div class="muted">暂无条件</div>'}</div></div>
-        <div class="decision-box"><h3>信号明细</h3>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)}</span></div><ul style="margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:12px">${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>`;
-      $('#open-cockpit').onclick = () => { selectInstrument(item.instId, { goCockpit: true }); };
-      $('#copy-to-order').onclick = () => { fillOrderFromPlan(item); navigate('live'); };
+        <div class="decision-box"><h3>信号明细</h3>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)}</span></div><ul style="margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:12px">${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
+        <div class="actions" style="margin-top:12px"><button class="btn primary" id="open-cockpit">打开K线</button><button class="btn" id="copy-to-order">同步到预检</button></div>`;
+      const openBtn = $('#open-cockpit'); if (openBtn) openBtn.onclick = () => { selectInstrument(item.instId, { goCockpit: true }); };
+      const copyBtn = $('#copy-to-order'); if (copyBtn) copyBtn.onclick = () => { fillOrderFromPlan(item); navigate('live'); };
     }
 
     function renderInstruments() {
