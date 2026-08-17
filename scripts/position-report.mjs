@@ -1,4 +1,5 @@
-// 持仓分析报告 v4：结论 + 明确数学(减仓到多少张/卖出多少张)
+// 持仓分析报告 v5：仓位 = 风险预算 × 方向确信度系数
+// 方向越明确(动量排名靠前/趋势信号ready/波动正常) → 仓位系数越大
 import { readFile } from 'node:fs/promises';
 
 const BASE = 'http://127.0.0.1:4319';
@@ -17,10 +18,45 @@ async function api(cookie, path) {
 }
 
 const jar = await login();
-const [orders, risk] = await Promise.all([api(jar, '/api/v3/orders'), api(jar, '/api/v3/risk/overview')]);
+const [orders, risk, ws] = await Promise.all([api(jar, '/api/v3/orders'), api(jar, '/api/v3/risk/overview'), api(jar, '/api/v3/workstation')]);
 const positions = orders.positions || [];
 const now = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
 const equity = Number(risk?.equity || 0);
+const oppByInst = new Map((ws.opportunities || []).map(o => [o.instId, o]));
+
+// 方向确信度模型：动量排名 + 信号就绪 + 波动率状态 → 仓位系数
+// 基础风险预算 2% 权益（方向不明时）→ 方向明确时放大
+function convictionFor(instId) {
+  const opp = oppByInst.get(instId);
+  if (!opp) return { level: '未知', mult: 1, basis: ['无策略信号数据'] };
+  const mom = opp.momentum;
+  const signals = opp.signals || [];
+  const momSig = signals.find(s => s.type === 'momentum_select');
+  const volSig = signals.find(s => s.type === 'vol_target');
+  const basis = [];
+  let mult = 1, level = '中性';
+
+  // 动量排名 → 核心系数
+  if (mom && mom.rank && mom.total) {
+    const pct = mom.rank / mom.total; // 排名分位(越小越强)
+    if (pct <= 0.1) { mult *= 2.5; level = '强烈'; basis.push(`动量 #${mom.rank}/${mom.total}（前10%，最强档）`); }
+    else if (pct <= 0.3) { mult *= 2.0; level = '明确'; basis.push(`动量 #${mom.rank}/${mom.total}（前30%）`); }
+    else if (pct <= 0.5) { mult *= 1.5; level = '中等'; basis.push(`动量 #${mom.rank}/${mom.total}（前50%）`); }
+    else { mult *= 0.8; level = '偏弱'; basis.push(`动量 #${mom.rank}/${mom.total}（后50%，方向存疑）`); }
+  }
+  // 信号就绪状态
+  if (momSig?.status === 'ready' && momSig.direction !== 'neutral') { mult *= 1.3; basis.push(`「${momSig.name}」就绪 ${momSig.score}分`); }
+  else if (momSig?.status === 'blocked') { mult *= 0.5; basis.push('动量信号受阻，方向未确认'); }
+  // 波动率状态：高波动降仓
+  if (volSig) {
+    const ev = (volSig.evidence || []).join(' ');
+    if (ev.includes('波动飙升')) { mult *= 0.5; basis.push('波动飙升，降仓'); }
+    else if (ev.includes('略高于')) { mult *= 0.8; basis.push('波动偏高，适度降仓'); }
+    else if (ev.includes('正常')) { basis.push('波动正常'); }
+  }
+  return { level, mult: Math.round(mult * 10) / 10, basis };
+}
+
 const lines = [];
 lines.push(`📊 持仓分析 · ${now}`);
 lines.push('━━━━━━━━━━━━━━━━');
@@ -35,48 +71,50 @@ if (!positions.length) {
     const raw = p.raw || {};
     const algo = (raw.closeOrderAlgo || [])[0] || {};
     const sl = Number(algo.slTriggerPx || 0), tp = Number(algo.tpTriggerPx || 0);
-    const holdMs = Date.now() - (Date.parse(p.sourceTs || p.recvTs) || Date.now());
-    const holdMin = Math.round(holdMs / 60000);
+    const holdMin = Math.round((Date.now() - (Date.parse(p.sourceTs || p.recvTs) || Date.now())) / 60000);
     const pct = entry ? (mark - entry) / entry * 100 * (side === '多' ? 1 : -1) : 0;
 
-    // ===== 核心数学 =====
-    const lossPerUnit = Math.abs(entry - sl);          // 每张止损亏损
-    const curRisk = lossPerUnit * qty;                 // 当前止损总亏损
+    // 数学
+    const lossPerUnit = Math.abs(entry - sl);
+    const curRisk = lossPerUnit * qty;
     const curRiskPct = equity ? curRisk / equity * 100 : 0;
     const distLiq = mark && liq ? Math.abs(mark - liq) / mark * 100 : null;
     const distSl = mark && sl ? Math.abs(mark - sl) / mark * 100 : null;
-    // 目标: 单笔止损亏损 ≤2% 权益 (标准风控) 与 ≤5% (宽松)
-    const qty2 = (equity * 0.02) / lossPerUnit;        // 2%目标可持仓
-    const qty5 = (equity * 0.05) / lossPerUnit;        // 5%目标可持仓
-    const sell2 = Math.max(0, qty - qty2);             // 2%目标需卖出
-    const sell5 = Math.max(0, qty - qty5);             // 5%目标需卖出
-    // 清算距离目标: 距清算 ≥10% → 杠杆 = 1/0.10 = 10x → 名义 = 权益×10
-    const liqSafeQty = equity * 10 / mark;             // 10x杠杆可持仓
-    const sellLiq = Math.max(0, qty - liqSafeQty);
 
-    // ===== 风险等级 =====
-    let level, verdict, reasons = [], actions = [];
-    if (liq && distLiq !== null && distLiq < 2) { level = '🔴 高危'; verdict = `距清算仅 ${distLiq.toFixed(2)}%，随时可能爆仓`; }
-    else if (liq && distLiq !== null && distLiq < 5) { level = '🟠 偏高'; verdict = '杠杆过高，清算距离偏近'; }
-    else { level = '🟢 正常'; verdict = '清算距离安全'; }
+    // 方向确信度 → 建议仓位
+    const conv = convictionFor(p.instId);
+    const baseRiskPct = 2;                                    // 基础风险预算 2% 权益
+    const targetRiskPct = baseRiskPct * conv.mult;            // 方向放大后的目标风险上限
+    const targetQty = equity * targetRiskPct / 100 / lossPerUnit; // 目标可持仓
+    const sellQty = Math.max(0, qty - targetQty);
+    const over = curRiskPct > targetRiskPct * 1.2;            // 超 20% 视为超配
 
-    // 风险点
-    if (distLiq !== null) reasons.push(`距清算 ${distLiq.toFixed(2)}%（清算价 ${liq.toFixed(0)}）`);
+    // 风险等级（结合方向：方向明确时容忍更高风险）
+    let level, verdict;
+    if (liq && distLiq !== null && distLiq < 2) { level = '🔴 高危'; verdict = '距清算不足 2%，方向再明确也必须降杠杆'; }
+    else if (over) { level = '🟠 超配'; verdict = `仓位超过方向确信度对应的上限（现 ${curRiskPct.toFixed(1)}% vs 应 ≤${targetRiskPct.toFixed(1)}%）`; }
+    else { level = '🟢 合理'; verdict = `仓位符合方向确信度（现 ${curRiskPct.toFixed(1)}% ≤ 上限 ${targetRiskPct.toFixed(1)}%）`; }
+
+    const reasons = [];
+    reasons.push(`方向确信度 ${conv.level} ×${conv.mult}（${conv.basis.join('、')}）`);
+    reasons.push(`距清算 ${distLiq?.toFixed(2) || '--'}%（清算价 ${liq?.toFixed(0) || '--'}）`);
     if (sl) reasons.push(`止损 ${sl.toFixed(2)}（距现价 ${distSl?.toFixed(2)}%）`);
-    else { reasons.push('未挂止损，裸仓'); actions.push('立即挂止损'); }
-    reasons.push(`若止损触发亏 ${curRiskPct.toFixed(1)}% 权益（${curRisk.toFixed(2)} USDT）`);
+    reasons.push(`止损触发亏 ${curRiskPct.toFixed(1)}% 权益`);
     reasons.push(`浮${upl >= 0 ? '盈' : '亏'} ${upl >= 0 ? '+' : ''}${upl.toFixed(2)}（${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%）· 开仓 ${holdMin} 分钟`);
     if (tp) { const rr = Math.abs(tp - entry) / Math.max(lossPerUnit, 0.0001); if (rr > 5) reasons.push(`止盈 ${tp.toFixed(0)} 盈亏比 ${rr.toFixed(1)}:1 目标过远`); }
 
-    // ===== 明确减仓数学 =====
-    if (curRiskPct > 5) {
-      actions.push(`减仓到 ${qty5.toFixed(2)} 张（卖出 ${sell5.toFixed(2)} 张）→ 止损亏损降到 ${(equity * 0.05).toFixed(2)} USDT = 5% 权益`);
-      if (curRiskPct > 10) actions.push(`严格风控：减到 ${qty2.toFixed(2)} 张（卖出 ${sell2.toFixed(2)} 张）→ 止损亏损 2% 权益`);
+    // 建议
+    const actions = [];
+    if (liq && distLiq !== null && distLiq < 2) actions.push(`立即降杠杆：距清算 <2%，先活下来`);
+    if (over) {
+      actions.push(`方向确信度支持 ≤${targetRiskPct.toFixed(1)}% 权益风险 → 减到 ${targetQty.toFixed(2)} 张（卖出 ${sellQty.toFixed(2)} 张）`);
+      if (sellQty > 0.5) actions.push(`或收紧止损到 ${entry - (equity * targetRiskPct / 100 / qty)} 附近保持张数`);
+    } else if (conv.mult >= 2 && curRiskPct < targetRiskPct * 0.7) {
+      actions.push(`方向明确（×${conv.mult}），风险预算未用满 → 可加仓到 ${targetQty.toFixed(2)} 张（加 ${Math.max(0, targetQty - qty).toFixed(2)} 张）`);
+    } else {
+      actions.push('持有，按计划执行');
     }
-    if (distLiq !== null && distLiq < 5) {
-      actions.push(`杠杆 ${lev}x 降为 10x：卖出 ${sellLiq.toFixed(2)} 张，留 ${liqSafeQty.toFixed(2)} 张 → 距清算拉远到 ~10%`);
-    }
-    if (!actions.length) actions.push('持有，按计划执行');
+    if (!sl) actions.push('立即挂止损');
 
     lines.push(`${level} ${p.instId} · ${side} · ${qty} 张`);
     lines.push(`  结论：${verdict}`);
