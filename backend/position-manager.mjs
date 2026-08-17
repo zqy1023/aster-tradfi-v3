@@ -154,20 +154,24 @@ export class PositionManager {
         const actual = (verify || []).filter((p) => Number(p.pos) !== 0)[0];
         process.stderr.write(`[仓位管理] 开仓确认: ${opp.instId} 实际持仓 ${actual?.pos || 0}张\n`);
       } catch { /* 确认失败不阻塞 */ }
-      // 自动开单后立即挂止损（滚仓v5: 15%距离，覆盖全量，挂好不动）
+      // 自动开单后立即挂止损+止盈（滚仓v5: 止损15% + 止盈40%，覆盖全量，挂好不动）
       // 避免新仓裸奔；只有自动开单才挂，已有仓位的手动止损不干预
       // 修复(2026-08-18): 市价开仓后OKX持仓未结算, reduceOnly止损立即挂会报code 1
       //   加延时重试: 2s后重试, 最多3次
       try {
         const slDist = 0.15; // 滚仓v5 止损 15%
+        const tpDist = 0.40; // 滚仓v5 止盈 40%（凯利方案）
         const slPx = arb.direction === 'long' ? price * (1 - slDist) : price * (1 + slDist);
+        const tpPx = arb.direction === 'long' ? price * (1 + tpDist) : price * (1 - tpDist);
         const slTrigger = Math.round(slPx * 100) / 100;
+        const tpTrigger = Math.round(tpPx * 100) / 100;
         let slResult = null;
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
             slResult = await this.setProtection(gateway, {
               instId: opp.instId, side: side === 'long' ? 'sell' : 'buy',
               slTriggerPx: slTrigger,
+              tpTriggerPx: tpTrigger,
               size: qty,
             });
             break;
@@ -178,11 +182,11 @@ export class PositionManager {
         }
         this.pendingSlInsts.add(opp.instId); // 标记已挂，后续不再重复
         actions.push({
-          action: '开仓挂止损', instId: opp.instId,
-          detail: `新仓自动挂止损 ${slTrigger}（15% 距离，覆盖 ${qty} 张），挂好不动`,
+          action: '开仓挂保护', instId: opp.instId,
+          detail: `新仓自动挂止损 ${slTrigger}（-15%）+ 止盈 ${tpTrigger}（+40%），覆盖 ${qty} 张`,
         });
       } catch (slErr) {
-        actions.push({ action: '开仓挂止损失败', instId: opp.instId, detail: `自动挂止损失败：${slErr?.message}，请手动设置止损` });
+        actions.push({ action: '开仓挂保护失败', instId: opp.instId, detail: `自动挂保护失败：${slErr?.message}，请手动设置止损止盈` });
       }
       actions.push({
         action: '自动开仓', instId: opp.instId,
