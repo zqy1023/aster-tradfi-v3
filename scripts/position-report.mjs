@@ -90,8 +90,17 @@ if (!positions.length) {
     const over = curRiskPct > targetRiskPct * 1.2;            // 超 20% 视为超配
 
     // 风险等级（结合方向：方向明确时容忍更高风险）
+    // 关键: 有止损保护 → 最大亏损是确定的(止损触发即离场), 清算永远不会触发
+    // 只要止损 < 清算距离, 按"最大确定亏损"评估而非机械报超配
+    const stopProtects = sl && liq && (side === '多' ? sl > liq : sl < liq); // 止损比清算更近
     let level, verdict;
-    if (liq && distLiq !== null && distLiq < 2) { level = '🔴 高危'; verdict = '距清算不足 2%，方向再明确也必须降杠杆'; }
+    if (liq && distLiq !== null && distLiq < 2 && !stopProtects) { level = '🔴 高危'; verdict = '距清算不足 2% 且止损未保护，随时可能爆仓'; }
+    else if (stopProtects && curRiskPct <= targetRiskPct * 1.5) {
+      level = '🟢 合理'; verdict = `止损保护有效：最大确定亏损 ${curRiskPct.toFixed(1)}% 权益（止损 ${sl.toFixed(2)} 先于清算 ${liq?.toFixed(0) || '--'} 触发），方向确信度 ${conv.level} 支持持有`;
+    }
+    else if (stopProtects) {
+      level = '🟡 偏重'; verdict = `止损保护有效，但最大亏损 ${curRiskPct.toFixed(1)}% 高于方向上限 ${targetRiskPct.toFixed(1)}%`;
+    }
     else if (over) { level = '🟠 超配'; verdict = `仓位超过方向确信度对应的上限（现 ${curRiskPct.toFixed(1)}% vs 应 ≤${targetRiskPct.toFixed(1)}%）`; }
     else { level = '🟢 合理'; verdict = `仓位符合方向确信度（现 ${curRiskPct.toFixed(1)}% ≤ 上限 ${targetRiskPct.toFixed(1)}%）`; }
 
@@ -105,8 +114,16 @@ if (!positions.length) {
 
     // 建议
     const actions = [];
-    if (liq && distLiq !== null && distLiq < 2) actions.push(`立即降杠杆：距清算 <2%，先活下来`);
-    if (over) {
+    if (liq && distLiq !== null && distLiq < 2 && !stopProtects) actions.push(`立即降杠杆：距清算 <2% 且无止损保护，先活下来`);
+    else if (stopProtects && curRiskPct <= targetRiskPct * 1.5) {
+      actions.push(`持有：止损 ${sl.toFixed(2)} 已锁死最大亏损 ${curRiskPct.toFixed(1)}% 权益，清算不会触发`);
+      if (!tp) actions.push(`挂止盈：方向动量强，建议目标 +8~10%（现价 ${mark.toFixed(2)} → ~${(mark * 1.09).toFixed(0)}）`);
+      else if (conv.mult >= 2 && curRiskPct < targetRiskPct * 0.7) actions.push(`方向明确（×${conv.mult}），风险未用满 → 可加仓到 ${targetQty.toFixed(2)} 张`);
+    }
+    else if (stopProtects) {
+      actions.push(`止损保护有效但偏重：最大亏损 ${curRiskPct.toFixed(1)}% 高于方向上限 ${targetRiskPct.toFixed(1)}%，可减到 ${targetQty.toFixed(2)} 张（卖出 ${sellQty.toFixed(2)} 张）或接受该风险持有`);
+    }
+    else if (over) {
       actions.push(`方向确信度支持 ≤${targetRiskPct.toFixed(1)}% 权益风险 → 减到 ${targetQty.toFixed(2)} 张（卖出 ${sellQty.toFixed(2)} 张）`);
       if (sellQty > 0.5) actions.push(`或收紧止损到 ${entry - (equity * targetRiskPct / 100 / qty)} 附近保持张数`);
     } else if (conv.mult >= 2 && curRiskPct < targetRiskPct * 0.7) {
