@@ -501,13 +501,65 @@ export class TradFiDomain {
       });
     }
     const scoped = (values) => values.filter((item) => item.tenantId === this.tenant(principal) && allowed.has(item.accountId) && (!item.instId || this.instruments.has(item.instId)));
+    const fills = scoped([...this.exchangeFills.values()]).sort((a, b) => String(b.sourceTs || b.recvTs || '').localeCompare(String(a.sourceTs || a.recvTs || ''))).slice(0, 500).map(clone);
+    // —— 30 天实盘分析：从真实成交推断 开仓/加减仓/平仓/反手 ——
+    const analysis = this.buildTradeAnalysis(fills);
     return {
       source: accounts.some((account) => account.environment === 'live' && account.status === 'connected') ? 'okx-private-ws' : 'waiting-okx-account',
       generatedAt: this.clock(),
       intents: await this.listOrders(principal),
       exchangeOrders: scoped([...this.exchangeOrders.values()]).sort((a, b) => String(b.sourceTs || b.recvTs || '').localeCompare(String(a.sourceTs || a.recvTs || ''))).slice(0, 500).map(clone),
-      fills: scoped([...this.exchangeFills.values()]).sort((a, b) => String(b.sourceTs || b.recvTs || '').localeCompare(String(a.sourceTs || a.recvTs || ''))).slice(0, 500).map(clone),
+      fills,
       positions: scoped([...this.positions.values()]).sort((a, b) => a.instId.localeCompare(b.instId)).map(clone),
+      analysis,
+    };
+  }
+
+  // 从真实成交序列推断最近 30 天的 开仓/加减仓/平仓/反手 行为
+  // 逻辑：按 标的+方向 维护名义持仓量；每笔成交对比前值判断行为类型
+  buildTradeAnalysis(fills) {
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const cutoff = now - 30 * DAY;
+    const tsOf = (f) => { const v = f.sourceTs || f.recvTs || 0; const n = Number(v); return Number.isFinite(n) && n > 0 ? n : Date.parse(v) || 0; };
+    const recent = fills.filter((f) => {
+      const ts = tsOf(f);
+      return ts >= cutoff;
+    }).sort((a, b) => tsOf(a) - tsOf(b));
+    // 按标的聚合持仓轨迹（net 模式：buy 加多、sell 加空）
+    const holdings = new Map(); // instId -> 名义净持仓（买正卖负，张数）
+    const stats = { total: 0, buys: 0, sells: 0, open: 0, add: 0, reduce: 0, close: 0, reverse: 0, fees: 0, turnover: 0, byInst: new Map() };
+    for (const f of recent) {
+      const key = f.instId;
+      const prev = holdings.get(key) || 0;
+      const signed = f.side === 'buy' ? Number(f.size) : -Number(f.size);
+      const next = prev + signed;
+      let action = 'open';
+      if (prev === 0 && next !== 0) action = 'open';            // 空仓→有仓
+      else if (prev !== 0 && next === 0) action = 'close';      // 有仓→空仓
+      else if (Math.sign(prev) === Math.sign(next)) action = Math.abs(next) > Math.abs(prev) ? 'add' : 'reduce'; // 同向增减
+      else action = 'reverse';                                  // 反向（反手）
+      holdings.set(key, next);
+      stats.total += 1;
+      if (f.side === 'buy') stats.buys += 1; else stats.sells += 1;
+      stats[action] += 1;
+      stats.fees += Math.abs(Number(f.fee) || 0);
+      stats.turnover += Math.abs(Number(f.size) || 0) * Math.abs(Number(f.price) || 0);
+      const byInst = stats.byInst.get(key) || { instId: key, open: 0, add: 0, reduce: 0, close: 0, reverse: 0, fees: 0, turnover: 0 };
+      byInst[action] += 1;
+      byInst.fees += Math.abs(Number(f.fee) || 0);
+      byInst.turnover += Math.abs(Number(f.size) || 0) * Math.abs(Number(f.price) || 0);
+      stats.byInst.set(key, byInst);
+    }
+    return {
+      windowDays: 30,
+      fillCount: recent.length,
+      buys: stats.buys,
+      sells: stats.sells,
+      actions: { open: stats.open, add: stats.add, reduce: stats.reduce, close: stats.close, reverse: stats.reverse },
+      totalFees: stats.fees,
+      turnover: stats.turnover,
+      byInst: [...stats.byInst.values()].sort((a, b) => b.turnover - a.turnover).slice(0, 10),
     };
   }
 

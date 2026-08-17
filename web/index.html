@@ -170,6 +170,7 @@
             <section class="panel"><div class="panel-head"><h2>风险中心</h2><span class="status" id="risk-state">--</span></div><div class="panel-body"><div class="metric-grid" id="risk-metrics"></div><div class="risk-ledger" id="risk-breakers" style="margin-top:10px"></div></div></section>
             <section class="panel"><div class="panel-head"><h2>当前持仓</h2><span class="chip">OKX positions</span></div><div class="table-wrap" id="positions"></div></section>
           </div>
+          <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>近 30 天实盘分析</h2><span class="chip">真实成交推断 · 开仓/加减仓/平仓/反手</span></div><div class="panel-body" id="trade-analysis"><div class="empty">等待成交数据生成分析</div></div></section>
           <div class="grid two" style="margin-top:12px"><section class="panel"><div class="panel-head"><h2>活动订单</h2><span class="chip">OKX orders</span></div><div class="table-wrap" id="exchange-orders"></div></section><section class="panel"><div class="panel-head"><h2>成交回报</h2><span class="chip">OKX fills</span></div><div class="table-wrap" id="fills"></div></section></div>
           <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>新建订单 · 风控预检</h2><span class="status warn">硬门禁</span></div><div class="panel-body"><form id="order-form"><div class="grid equal"><div class="field"><label for="order-account">账户</label><select id="order-account"></select></div><div class="field"><label for="order-inst">合约</label><select id="order-inst"></select></div><div class="field"><label for="order-side">方向</label><select id="order-side"><option value="buy">买入/做多</option><option value="sell">卖出/做空</option></select></div></div><div class="grid equal"><div class="field"><label for="order-type">订单类型</label><select id="order-type"><option value="limit">限价</option><option value="market">市价</option></select></div><div class="field"><label for="order-size">数量（张）</label><input id="order-size" type="number" min="0" step="0.0001" value="1"></div><div class="field"><label for="order-price">价格</label><input id="order-price" type="number" min="0" step="0.0001" placeholder="市价单使用最新价预检"></div></div><div class="grid equal"><div class="field"><label for="order-stop">止损触发价</label><input id="order-stop" type="number" min="0" step="0.0001" placeholder="新开仓必填"></div><div class="field"><label for="order-target">止盈触发价</label><input id="order-target" type="number" min="0" step="0.0001" placeholder="可选"></div></div><label class="check-row" for="order-reduce-only"><input id="order-reduce-only" type="checkbox">只减仓（不增加现有敞口）</label><div class="field"><label for="order-key">幂等键</label><input id="order-key" value="plan-preview-001"></div><div class="actions"><button class="btn" type="button" id="precheck">运行预检</button><button class="btn primary" id="order-submit" type="submit" disabled>核对后提交</button></div></form><div class="decision-box warn" id="risk-check" role="status" style="margin-top:12px">尚未预检</div><div class="danger-note" id="live-mode-note" style="margin-top:12px">正在读取实盘开关；系统不实现任何提现接口。</div></div></section>
         </section>
@@ -594,6 +595,27 @@
       $('#fills').innerHTML = table(p.fills || [], [
         [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${x.side === 'buy' ? '买' : '卖'}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
       ], '暂无成交回报');
+      renderTradeAnalysis(p.analysis);
+    }
+
+    // 近 30 天实盘行为分析（从真实成交推断）
+    function renderTradeAnalysis(a) {
+      if (!a || !a.fillCount) { $('#trade-analysis').innerHTML = '<div class="empty">近 30 天暂无成交，无法生成行为分析</div>'; return; }
+      const acts = a.actions || {};
+      const actionChip = (n, label, color) => `<div class="metric"><span>${label}</span><strong class="num" style="color:${color}">${n}</strong><small>笔</small></div>`;
+      const turnover = a.turnover ? `$${fmt(a.turnover, 0)}` : '--';
+      $('#trade-analysis').innerHTML = `
+        <div class="metric-grid">
+          ${actionChip(acts.open ?? 0, '开仓', 'var(--cyan)')}
+          ${actionChip(acts.add ?? 0, '加仓', '#26d39c')}
+          ${actionChip(acts.reduce ?? 0, '减仓', '#e8b64c')}
+          ${actionChip(acts.close ?? 0, '平仓', '#9aa4ae')}
+          ${actionChip(acts.reverse ?? 0, '反手', '#ff667a')}
+          <div class="metric"><span>成交笔数</span><strong class="num">${a.fillCount}</strong><small>买 ${a.buys} / 卖 ${a.sells}</small></div>
+          <div class="metric"><span>成交额</span><strong class="num">${turnover}</strong><small>30 天</small></div>
+          <div class="metric"><span>手续费</span><strong class="num">$${fmt(a.totalFees, 2)}</strong><small>已从成交扣</small></div>
+        </div>
+        ${(a.byInst || []).length ? `<div class="report-section" style="margin-top:12px"><h3>分标的操作分布（按成交额排序）</h3><div class="table-wrap"><table class="table"><thead><tr><th>合约</th><th>开仓</th><th>加仓</th><th>减仓</th><th>平仓</th><th>反手</th><th>成交额</th><th>手续费</th></tr></thead><tbody>${a.byInst.map(x => `<tr><td>${esc(x.instId)}</td><td>${x.open}</td><td>${x.add}</td><td>${x.reduce}</td><td>${x.close}</td><td>${x.reverse}</td><td>$${fmt(x.turnover, 0)}</td><td>$${fmt(x.fees, 2)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
     }
 
     async function loadLive() {
