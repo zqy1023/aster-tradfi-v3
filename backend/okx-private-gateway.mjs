@@ -164,6 +164,34 @@ export class OKXPrivateGateway {
     return this.request('cancel-order', [{ instId: intent.instId, clOrdId: intent.id.replaceAll('-', '').slice(0, 32) }], `C-${intent.id}`.slice(0, 32));
   }
 
+  // 为已有持仓挂止损/止盈（OKX order-algo 接口）— 保护性操作，不改变仓位大小
+  // params: { instId, side(当前持仓方向 buy=sell保护? 按OKX: 多单挂SL用sell), slTriggerPx?, tpTriggerPx?, closeFraction=1 }
+  async setPositionProtection({ instId, side = 'sell', slTriggerPx = null, tpTriggerPx = null, closeFraction = 1 } = {}) {
+    if (!slTriggerPx && !tpTriggerPx) throw new Error('至少提供一个止损或止盈价');
+    const algo = { instId, tdMode: 'cross', side, ordType: 'conditional', sz: String(closeFraction), triggerPxType: 'last' };
+    if (slTriggerPx) Object.assign(algo, { slTriggerPx: String(slTriggerPx), slOrdPx: '-1' });
+    if (tpTriggerPx) Object.assign(algo, { tpTriggerPx: String(tpTriggerPx), tpOrdPx: '-1' });
+    // 调用 REST: POST /api/v5/trade/order-algo
+    const timestamp = new Date().toISOString();
+    const body = JSON.stringify(algo);
+    const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}POST/api/v5/trade/order-algo${body}`).digest('base64');
+    const response = await this.fetchImpl(`${this.restUrl}/api/v5/trade/order-algo`, {
+      method: 'POST',
+      headers: {
+        'OK-ACCESS-KEY': this.credentials.apiKey,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': this.credentials.passphrase,
+        'content-type': 'application/json',
+        'user-agent': 'aster-tradfi-v3',
+      },
+      body,
+    });
+    const payload = await response.json();
+    if (payload.code !== '0') throw new Error(`OKX 挂保护单失败：${payload.msg || payload.code}`);
+    return payload.data || [];
+  }
+
   close() {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

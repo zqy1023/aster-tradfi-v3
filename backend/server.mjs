@@ -690,6 +690,34 @@ const server = createServer(async (req, res) => {
       const [data, risk] = await Promise.all([domain.privateTradingData(principal), domain.riskOverview(principal)]);
       json(res, 200, { ...data, orders: data.intents, risk }); return;
     }
+    // 为已有持仓挂止损/止盈（保护性操作，不改变仓位）
+    if (url.pathname === '/api/v3/positions/protection' && req.method === 'POST') {
+      const principal = requirePrincipal(req, res); if (!principal) return;
+      const input = await readJson(req);
+      const { instId, slTriggerPx, tpTriggerPx, closeFraction = 1 } = input;
+      if (!instId) { json(res, 400, { error: '缺少 instId' }); return; }
+      if (!slTriggerPx && !tpTriggerPx) { json(res, 400, { error: '至少提供 slTriggerPx 或 tpTriggerPx' }); return; }
+      // 找账户网关
+      const accounts = await domain.listAccounts(principal);
+      const account = accounts.find((a) => a.environment === 'live');
+      if (!account) { json(res, 400, { error: '未找到实盘账户' }); return; }
+      const gateway = accountGateways.get(account.id);
+      if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有连接未就绪' }); return; }
+      // 校验当前持仓存在且方向匹配
+      const position = (domain.positions.get(`${account.id}|${instId}|net`) || domain.positions.get(`${account.id}|${instId}|long`) || domain.positions.get(`${account.id}|${instId}|short`));
+      const isLong = position ? position.side === 'long' : true;
+      if (position && Number(position.quantity) === 0) { json(res, 400, { error: '该标的无持仓' }); return; }
+      const result = await gateway.setPositionProtection({
+        instId,
+        side: isLong ? 'sell' : 'buy',
+        slTriggerPx: slTriggerPx ? Number(slTriggerPx) : null,
+        tpTriggerPx: tpTriggerPx ? Number(tpTriggerPx) : null,
+        closeFraction: Number(closeFraction) || 1,
+      });
+      domain.recordAudit(principal, 'position.protection', { instId, slTriggerPx, tpTriggerPx, result });
+      json(res, 200, { ok: true, result });
+      return;
+    }
     if (url.pathname === '/api/v3/private/stream' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
