@@ -45,7 +45,16 @@ export class PositionManager {
     }
     const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
     const available = Number(account.available || this.domain.riskSnapshots.get(account.id)?.available || equity);
-    const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
+    // ⚠️ 实盘安全(2026-08-18 事故): 用OKX实时持仓判断"已持仓", 不依赖内存
+    //   事故: 5次evaluate各开0.223张叠加成1.115张, openedThisRound只拦单轮
+    let held = new Set();
+    try {
+      const okxPositions = await gateway.privateGet('/api/v5/account/positions?instType=SWAP').catch(() => []);
+      (okxPositions || []).filter((p) => Number(p.pos) !== 0).forEach((p) => held.add(p.instId));
+    } catch { /* 查询失败则用内存 */ }
+    if (held.size === 0) {
+      held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
+    }
     const openedThisRound = new Set(); // 本轮已开的标的（防止内存同步延迟导致重复开仓）
     const now = Date.now();
     // —— 信号强度排序：动量排名绝对主导（用户要求取最强）——
@@ -93,34 +102,28 @@ export class PositionManager {
       //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
-      const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
-      // E. 硬止损距离：≤ 现价×2%（用户规则）；SNDK 例外用 1%（用户指定：SNDK止损1%能开1张）
-      // 其他标的 1%~2%，SNDK 固定 1%
-      const slPct = opp.instId === 'SNDK-USDT-SWAP'
-        ? 0.01
-        : Math.min(0.02, Math.max(0.01, atrPct * 2)); // 止损距离 1%~2%（上限2%）
-      const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算上限6%
-      const riskUsd = equity * riskBudgetPct;
-      const lossPerUnit = price * slPct;
+      // ===== 滚仓v5 仓位公式（2026-08-18 重写，替代旧v7）=====
+      // 规则: 2标的各50%权益名义 + 3x杠杆 + 15%止损 + 80%止盈
+      //   单标的名义 = 权益 × 50%
+      //   保证金 = 名义 / 3 = 权益 × 16.7%（两仓共 33% 可用）
+      //   单笔止损亏损 = 名义 × 15% = 权益 × 7.5%
+      const lever = 3; // 滚仓v5 固定 3x
+      const notionalCap = equity * 0.5; // 单标的名义 ≤ 50% 权益
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
-      // A. 风险预算约束的张数
-      let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz + 1e-9) * lotSz;
-      // B. 单笔名义上限约束：名义 ≤ 权益 × 100%（用户规则）
-      //    SNDK 例外：1张最小名义1735U=372%权益, 用户指定"破例放开"（最强动量+3416%）
-      const notionalCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
       let qtyB = Math.floor(notionalCap / price / lotSz + 1e-9) * lotSz;
-      // C. 保证金约束（按标的杠杆: SNDK 20x, 其他 10x; 保证金 ≤ 可用×30%）
-      const lever = opp.instId === 'SNDK-USDT-SWAP' ? 20 : 10;
-      const marginCap = available * 0.3;
+      // 保证金约束: 单仓保证金 ≤ 可用 × 40%（两仓共 80%，留 20% 缓冲）
+      const marginCap = available * 0.4;
       let qtyC = Math.floor(marginCap * lever / price / lotSz + 1e-9) * lotSz;
-      // 取三者最小
+      // 风险预算: 止损 15% 名义 → 亏损 ≤ 权益 × 10%
+      const lossPerUnit = price * 0.15;
+      let qtyA = Math.floor((equity * 0.10) / lossPerUnit / lotSz + 1e-9) * lotSz;
+      // 取最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // 浮点修正：转字符串去尾（消除 25.700000000000003，OKX 51121 拒单）
-      // round 不够（0.1 进制浮点误差），用 toFixed(6) 后 Number 再按 lotSz 取整
+      // 浮点修正（OKX 51121）
       qty = Number((Math.floor(qty / lotSz) * lotSz).toFixed(6));
-      // 组合预算：已有持仓名义 + 本次 ≤ 权益×100%（SNDK例外5倍）
-      const comboCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
+      // 组合预算: 已有持仓名义 + 本次 ≤ 权益 × 100%（2标的总名义上限）
+      const comboCap = equity * 1.0;
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
@@ -136,7 +139,7 @@ export class PositionManager {
       // 用 openedThisRound 防止内存同步延迟导致的重复开仓（实测bug: SNXX+KORU同轮都开了）
       if (held.size > 0 || openedThisRound.size > 0) continue;
       // 记录约束明细供理由展示
-      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义100%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损${(slPct*100).toFixed(1)}%距离)`;
+      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义50%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损15%距离)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
@@ -145,10 +148,16 @@ export class PositionManager {
       };
       const result = await this.placeOrder(gateway, intent);
       openedThisRound.add(opp.instId); // 标记本轮已开，后续标的跳过
-      // 自动开单后立即挂止损（用户规则: SNDK 1%/其他 2%，覆盖全量，挂好不动）
+      // 实盘安全: 开仓后立即确认实际持仓, 若发现异常(叠加)记录
+      try {
+        const verify = await gateway.privateGet(`/api/v5/account/positions?instType=SWAP&instId=${opp.instId}`).catch(() => []);
+        const actual = (verify || []).filter((p) => Number(p.pos) !== 0)[0];
+        process.stderr.write(`[仓位管理] 开仓确认: ${opp.instId} 实际持仓 ${actual?.pos || 0}张\n`);
+      } catch { /* 确认失败不阻塞 */ }
+      // 自动开单后立即挂止损（滚仓v5: 15%距离，覆盖全量，挂好不动）
       // 避免新仓裸奔；只有自动开单才挂，已有仓位的手动止损不干预
       try {
-        const slDist = opp.instId === 'SNDK-USDT-SWAP' ? 0.01 : 0.02;
+        const slDist = 0.15; // 滚仓v5 止损 15%
         const slPx = arb.direction === 'long' ? price * (1 - slDist) : price * (1 + slDist);
         const slResult = await this.setProtection(gateway, {
           instId: opp.instId, side: side === 'long' ? 'sell' : 'buy',
