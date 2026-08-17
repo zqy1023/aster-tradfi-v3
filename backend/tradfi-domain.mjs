@@ -229,30 +229,26 @@ export class TradFiDomain {
   // 批量持久化：由外部定时器每 N 秒调用一次，避免高频 WS 消息逐条写库撑爆连接池与堆
   async persistMarketSnapshots() {
     if (!this.repository) return { persisted: 0, skipped: 0 };
-    const tasks = [];
-    for (const snapshot of this.markets.values()) {
-      if (snapshot.source === 'okx-ws') tasks.push(this.repository.upsertTickerSnapshot(snapshot));
-    }
-    for (const item of this.fundingRates.values()) {
-      tasks.push(this.repository.upsertFundingRate(item));
-    }
-    for (const [instId, book] of this.orderBooks.entries()) {
-      tasks.push(this.repository.saveOrderBookSnapshot(instId, book));
-    }
-    for (const [instId, ticks] of this.tradeTicks.entries()) {
-      if (ticks.length) tasks.push(this.repository.saveMarketTrades(instId, ticks.slice(0, 100)));
-    }
-    const results = await Promise.allSettled(tasks);
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    if (failed) {
-      const samples = results
-        .map((result, index) => ({ result, index }))
-        .filter(({ result }) => result.status === 'rejected')
-        .slice(0, 3)
-        .map(({ index, result }) => `${index}:${result.reason?.message || 'unknown'}`);
-      console.error(`[persist] ${failed}/${tasks.length} 条写入失败 ${samples.join(' | ')}`);
-    }
-    return { persisted: tasks.length - failed, failed };
+    // 分批串行写库：400+ 独立事务并发执行同表 upsert 会互相死锁（Deadlock）
+    // 改为按类型分批、每批串行，杜绝锁竞争
+    const tickers = [...this.markets.values()].filter((s) => s.source === 'okx-ws');
+    const fundings = [...this.fundingRates.values()];
+    const books = [...this.orderBooks.entries()];
+    const trades = [...this.tradeTicks.entries()].filter(([, ticks]) => ticks.length);
+    const total = tickers.length + fundings.length + books.length + trades.length;
+    let failed = 0;
+    const runBatch = async (items, fn) => {
+      for (const item of items) {
+        try { await fn(item); } catch { failed += 1; }
+      }
+    };
+    // 每类串行执行（同表不并发 → 无锁竞争）
+    await runBatch(tickers, (s) => this.repository.upsertTickerSnapshot(s));
+    await runBatch(fundings, (f) => this.repository.upsertFundingRate(f));
+    await runBatch(books, ([instId, book]) => this.repository.saveOrderBookSnapshot(instId, book));
+    await runBatch(trades, ([instId, ticks]) => this.repository.saveMarketTrades(instId, ticks.slice(0, 100)));
+    if (failed) console.error(`[persist] ${failed}/${total} 条写入失败`);
+    return { persisted: total - failed, failed };
   }
 
   async listAccounts(principal) {
