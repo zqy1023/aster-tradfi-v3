@@ -74,7 +74,8 @@ lines.push(`📊 持仓分析 · ${now}`);
 lines.push('━━━━━━━━━━━━━━━━');
 
 if (!positions.length) {
-  lines.push('📭 当前无持仓');
+  // 无持仓：不播报（cron no_agent 空输出=静默）
+  process.exit(0);
 } else {
   for (const p of positions) {
     const side = p.side === 'long' ? '多' : '空';

@@ -52,6 +52,9 @@ function convictionFor(instId) {
   if (pct <= 0.5) return { level: '中等', mult: 2.0 };
   return { level: '偏弱', mult: 1.0 };
 }
+// 合约 lotSz 缓存（避免频繁查 OKX）
+const positionLotSzCache = new Map();
+// 自动开单安全开关：默认 OFF，必须显式设 AUTO_TRADE_ENABLED=true 才开启
 const positionManager = new PositionManager({
   domain,
   getGateway: (accountId) => accountGateways.get(accountId),
@@ -59,17 +62,60 @@ const positionManager = new PositionManager({
   setProtection: (gateway, params) => gateway.setPositionProtection(params),
   setTrailing: (gateway, params) => gateway.setTrailingStop(params),
   cancelAlgo: (gateway, params) => gateway.cancelAlgo(params),
-  // 减仓执行：市价只减仓单（通过 WS order 通道，reduceOnly）
+  // 减仓执行：市价只减仓单（通过 REST order 通道，reduceOnly）
   reducePosition: async (gateway, { instId, side, qty }) => {
     const intent = {
-      id: `MGR-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase(),
+      id: `MGR${Date.now()}${Math.random().toString(36).slice(2, 8)}`,
       instId, side, orderType: 'market', size: qty, reduceOnly: true,
     };
     const result = await gateway.placeOrder(intent);
     domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_reduce', { instId, side, qty, reason: '风险超上限自动减仓', result });
     return result;
   },
+  // 开仓执行：市价单（自动开单用）
+  placeOrder: async (gateway, intent) => {
+    const result = await gateway.placeOrder(intent);
+    domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_open', { instId: intent.instId, side: intent.side, qty: intent.size, reason: '策略信号final自动开单', result });
+    return result;
+  },
+  // 机会列表（自动开单信号源）：复用 buildWorkstation 完整构建（含K线就绪），15s硬超时
+  getOpportunities: async () => {
+    const principal = { tenantId: '1', userId: '1', role: 'admin' };
+    const timer = setTimeout(() => { throw new Error('buildWorkstation超时'); }, 15_000);
+    try {
+      const snapshot = await buildWorkstation(principal).catch((e) => { process.stderr.write(`[仓位管理] buildWorkstation失败: ${e?.message}\n`); return { opportunities: [] }; });
+      return (snapshot.opportunities || []).filter((o) => o.arbitration?.decision?.startsWith('final'));
+    } finally { clearTimeout(timer); }
+  },
   conviction: convictionFor,
+  // ATR 波动率：从 1D 已确认 K 线算 ATR14 / 现价（百分比）
+  getAtrPct: async (instId) => {
+    const candles = domain.candleSets?.[instId]?.['1D'] || domain.candleSets?.[instId]?.default || [];
+    const confirmed = candles.filter((c) => c.confirm !== false && c.high && c.low).slice(-30);
+    if (confirmed.length < 15) return 0.003;
+    const trs = [];
+    for (let i = 1; i < confirmed.length; i++) {
+      const h = Number(confirmed[i].high), l = Number(confirmed[i].low), pc = Number(confirmed[i - 1].close);
+      trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
+    const atr = trs.slice(-14).reduce((a, b) => a + b, 0) / Math.min(14, trs.length);
+    const price = Number(confirmed[confirmed.length - 1].close) || 1;
+    return atr / price; // ATR% (如 0.01 = 1%)
+  },
+  // 合约最小下单量 lotSz：优先用 domain 已存 instruments，缺则查 OKX public instruments
+  getLotSz: async (instId) => {
+    const inst = [...domain.instruments.values()].find((i) => i.instId === instId);
+    if (inst?.lotSz) return Number(inst.lotSz);
+    const lotCache = positionLotSzCache.get(instId);
+    if (lotCache) return lotCache;
+    try {
+      const resp = await okxFetch(`https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=${encodeURIComponent(instId)}`, { headers: { 'user-agent': 'aster-tradfi-v3' } });
+      const j = await resp.json();
+      const lot = Number((j.data || [])[0]?.lotSz || 0.01);
+      positionLotSzCache.set(instId, lot);
+      return lot;
+    } catch { return 0.01; }
+  },
   onNotify: (actions) => {
     const lines = actions.map((a) => `[仓位管理] ${a.action} ${a.instId} — ${a.detail}`);
     process.stderr.write(lines.join('\n') + '\n');
@@ -77,6 +123,8 @@ const positionManager = new PositionManager({
     pushQQReport(lines.join('\n')).catch((error) => process.stderr.write(`[仓位管理] QQ推送失败 ${error?.message}\n`));
   },
 });
+// 自动开单默认关闭，AUTO_TRADE_ENABLED=true 才开启（安全闸）
+positionManager.autoOpenEnabled = process.env.AUTO_TRADE_ENABLED === 'true';
 const marketEventService = new MarketEventService({ repository: domainRepository });
 const strategyManager = new StrategyManager({ repository: domainRepository });
 
@@ -123,6 +171,12 @@ setInterval(() => {
     .then((res) => { if (res && (res.error || res.actions?.length)) process.stderr.write(`[仓位管理] 评估: ${JSON.stringify(res)}\n`); })
     .catch((error) => process.stderr.write(`[仓位管理] 评估异常 ${error?.stack || error}\n`));
 }, 30_000).unref();
+// 启动自检：8 秒后手动跑一次，确认管理器链路
+setTimeout(() => {
+  positionManager.evaluate({ force: true })
+    .then((res) => process.stderr.write(`[仓位管理] 启动自检: ${JSON.stringify(res).slice(0, 300)}\n`))
+    .catch((error) => process.stderr.write(`[仓位管理] 启动自检异常 ${error?.stack || error}\n`));
+}, 8_000).unref();
 const service = new AIResearchService({
   repository,
   provider,
@@ -257,6 +311,8 @@ async function pushOverview(principal) {
     liveTrading: process.env.OKX_TRADING_ENABLED === 'true',
     momentumRank,
   });
+  // 缓存最近快照供仓位管理器自动开单读取信号
+  domain.lastWorkstationSnapshot = snapshot;
   const payload = {
     type: 'overview',
     generatedAt: new Date().toISOString(),
@@ -278,6 +334,17 @@ async function pushOverview(principal) {
 
 // 行情消息到达时调度机会页推送（300ms 节流，所有标的合并为一次快照，按客户端 principal 分别生成）
 // 前端合约列表已改为增量更新价格文本（非整表重绘），可承受更高频率
+// 行情驱动仓位管理器：ticker 到达即触发评估（5s 节流），实现动态止损实时调整
+let positionTickTimer = null;
+function schedulePositionManagerTick() {
+  if (positionTickTimer) return;
+  positionTickTimer = setTimeout(() => {
+    positionTickTimer = null;
+    positionManager.evaluate({ force: true })
+      .then((res) => { if (res?.error) process.stderr.write(`[仓位管理] 评估失败: ${res.error}\n`); else if (res?.actions?.length) process.stderr.write(`[仓位管理] 评估动作: ${JSON.stringify(res.actions).slice(0,200)}\n`); })
+      .catch((error) => process.stderr.write(`[仓位管理] 评估异常 ${error?.stack || error}\n`));
+  }, 15_000);
+}
 function scheduleOverviewPush() {
   if (!overviewClients.size) return;
   const uniquePrincipals = new Map();
@@ -302,7 +369,7 @@ if (liveMarketEnabled) {
       try {
         domain.ingestMarketMessage(message);
         scheduleMarketBroadcast(message.instId);
-        if (message.type === 'tickers') scheduleOverviewPush();
+        if (message.type === 'tickers') { scheduleOverviewPush(); schedulePositionManagerTick(); }
       } catch (error) {
         process.stderr.write(`[public-ws] 处理行情消息异常 ${message?.type || 'unknown'}: ${error?.stack || error}\n`);
       }

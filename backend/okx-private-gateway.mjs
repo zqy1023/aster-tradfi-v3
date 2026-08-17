@@ -148,8 +148,10 @@ export class OKXPrivateGateway {
     });
   }
 
-  placeOrder(intent) {
-    const order = { instId: intent.instId, tdMode: 'cross', side: intent.side, ordType: intent.orderType, sz: String(intent.size), clOrdId: intent.id.replaceAll('-', '').slice(0, 32), reduceOnly: intent.reduceOnly };
+  async placeOrder(intent) {
+    // clOrdId 必须 ≤32 字符、仅字母数字（OKX 51000 错误：连字符/下划线非法）
+    const clOrdId = intent.id.replaceAll('-', '').replaceAll('_', '').slice(0, 32) || `AUTO${Date.now()}`;
+    const order = { instId: intent.instId, tdMode: 'cross', side: intent.side, ordType: intent.orderType, sz: String(intent.size), clOrdId, reduceOnly: intent.reduceOnly };
     if (this.accountConfig?.posMode === 'long_short_mode') {
       order.posSide = intent.reduceOnly ? (intent.side === 'buy' ? 'short' : 'long') : (intent.side === 'buy' ? 'long' : 'short');
     }
@@ -160,12 +162,35 @@ export class OKXPrivateGateway {
       if (intent.takeProfitPrice) Object.assign(protection, { tpTriggerPx: String(intent.takeProfitPrice), tpOrdPx: '-1' });
       order.attachAlgoOrds = [protection];
     }
-    return this.request('order', [order], intent.id);
+    // 用 REST 下单（可靠、同步返回 ordId），WS order op 响应不可靠
+    const body = JSON.stringify(order);
+    const timestamp = new Date().toISOString();
+    const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}POST/api/v5/trade/order${body}`).digest('base64');
+    const response = await this.fetchImpl(`${this.restUrl}/api/v5/trade/order`, {
+      method: 'POST',
+      headers: {
+        'OK-ACCESS-KEY': this.credentials.apiKey,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': this.credentials.passphrase,
+        'content-type': 'application/json',
+        'user-agent': 'aster-tradfi-v3',
+      },
+      body,
+      signal: AbortSignal.timeout(12_000),
+    });
+    const payload = await response.json();
+    if (payload.code !== '0') {
+      const detail = (payload.data || []).map((d) => `${d.sCode}:${d.sMsg}`).join(';');
+      throw new Error(`OKX 下单失败：${payload.msg || payload.code} [${detail}] body=${body}`);
+    }
+    return payload.data || [];
   }
 
   // OKX 原生移动止损（追踪止损）：价格创新高后按回撤比例触发，只减仓
   async listPendingAlgos(instType = 'SWAP') {
-    const types = ['move_order_stop', 'conditional', 'oco', 'trigger'];
+    // 只查用到的两种（conditional=硬止损/动态止损, move_order_stop=旧原生追踪），减少限流风险
+    const types = ['conditional', 'move_order_stop'];
     const rows = await Promise.all(types.map((ordType) => this.privateGet(`/api/v5/trade/orders-algo-pending?ordType=${ordType}&instType=${encodeURIComponent(instType)}`).catch(() => [])));
     return rows.flat();
   }

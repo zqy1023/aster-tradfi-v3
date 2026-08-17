@@ -6,7 +6,7 @@
 //   4. 仓位调整：风险超上限自动减仓（数学理由），加仓需明确确认
 // 每次操作写审计日志 + 通过 onNotify 推送理由
 export class PositionManager {
-  constructor({ domain, getGateway, getAlgos, setProtection, setTrailing, cancelAlgo, reducePosition, conviction, clock = () => new Date(), onNotify = () => {} } = {}) {
+  constructor({ domain, getGateway, getAlgos, setProtection, setTrailing, cancelAlgo, reducePosition, placeOrder, conviction, getAtrPct = async () => 0.003, getOpportunities = async () => [], getLotSz = async () => 0.01, clock = () => new Date(), onNotify = () => {} } = {}) {
     this.domain = domain;
     this.getGateway = getGateway;
     this.getAlgos = getAlgos;
@@ -14,11 +14,97 @@ export class PositionManager {
     this.setTrailing = setTrailing;
     this.cancelAlgo = cancelAlgo;
     this.reducePosition = reducePosition || (async () => { throw new Error('未配置减仓执行通道'); });
+    this.placeOrder = placeOrder || (async () => { throw new Error('未配置开仓执行通道'); });
     this.conviction = conviction;
+    this.getAtrPct = getAtrPct;
+    this.getOpportunities = getOpportunities;
+    this.getLotSz = getLotSz;
     this.clock = clock;
     this.onNotify = onNotify;
     this.lastRun = 0;
     this.minIntervalMs = 15_000; // 同一持仓 15s 内不重复评估
+    this.peakPrices = new Map();      // instId → {high, at} 持仓期间最高价
+    this.sysTrailingIds = new Set();  // 系统自管动态止损的 algoId 集合
+    this.cooldowns = new Map();       // instId → 平仓时间戳（30分钟冷却）
+    this.autoOpenEnabled = false;     // 自动开单默认关闭（安全开关）
+    this.lastTrailingMove = new Map(); // instId → 上次动态止损移动时间（10分钟冷却）
+  }
+
+  // 自动开单：默认禁用！只有显式开启(AUTO_TRADE_ENABLED)才允许
+  // 教训(2026-08-17): 未充分验证的仓位公式导致SNXX开39.6张大仓, 必须先人工确认
+  async autoOpen({ gateway, account, opportunities, actions } = {}) {
+    if (!this.autoOpenEnabled) return { disabled: true };
+    const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
+    const available = Number(account.available || this.domain.riskSnapshots.get(account.id)?.available || equity);
+    const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
+    // —— 组合保证金预算：已有持仓保证金 + 新开 ≤ 权益×40% ——
+    let usedMargin = 0;
+    for (const p of this.domain.positions.values()) {
+      if (p.accountId === account.id && Number(p.quantity) !== 0) {
+        usedMargin += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0) / Math.max(1, Number(p.leverage || 10));
+      }
+    }
+    const budget = equity * 0.4;                    // 组合总预算 40% 权益
+    const perInstCap = equity * 0.15;               // 单标的上限 15% 权益
+    const now = Date.now();
+    for (const opp of opportunities || []) {
+      if (held.has(opp.instId)) continue;                 // 已有持仓不开
+      const cooldown = this.cooldowns.get(opp.instId);
+      if (cooldown && now - cooldown < 30 * 60_000) continue; // 平仓后30分钟冷却
+      const arb = opp.arbitration || {};
+      if (!arb.decision || !arb.decision.startsWith('final')) continue; // 非 final 不开
+      const conv = this.conviction(opp.instId);
+      if (conv.mult < 2) continue;                        // 方向不够强
+      // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
+      const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
+      if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
+      // 仓位计算：风险预算 = 2% × 方向系数；止损 = 2×ATR 距离
+      const price = Number(opp.price);
+      if (!price || price <= 0) continue;
+      const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
+      const slPct = Math.min(0.05, Math.max(0.015, atrPct * 2)); // 止损距离 1.5%~5%
+      const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算 2%×系数, 上限6%
+      const riskUsd = equity * riskBudgetPct;
+      const lossPerUnit = price * slPct;
+      let qty = Math.floor(riskUsd / lossPerUnit * 100) / 100;    // 向下取整到0.01
+      // 按 OKX lotSz 取整（SNXX lotSz=0.1, KORU/SNDK=1 等）
+      const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
+      qty = Math.floor(qty / lotSz) * lotSz;
+      if (qty <= 0) qty = lotSz;
+      // —— 保证金三重约束：单标的上限 / 组合预算 / 可用余额 ——
+      const lever = 10; // 自动开仓用 10x（保守，避免50x爆仓风险）
+      let margin = qty * price / lever;
+      // 1) 单标的上限：保证金 ≤ 权益×15%
+      if (margin > perInstCap) {
+        qty = Math.floor(perInstCap * lever / price / lotSz) * lotSz;
+        margin = qty * price / lever;
+      }
+      // 2) 组合预算：已有保证金 + 本次 ≤ 权益×40%
+      if (usedMargin + margin > budget) {
+        const remain = Math.max(0, budget - usedMargin);
+        qty = Math.floor(remain * lever / price / lotSz) * lotSz;
+        margin = qty * price / lever;
+      }
+      // 3) 可用余额：保证金 ≤ 可用 × 50%（留安全垫）
+      if (margin > available * 0.5) {
+        qty = Math.floor(available * 0.5 * lever / price / lotSz) * lotSz;
+        margin = qty * price / lever;
+      }
+      if (qty < lotSz) continue; // 预算不足，跳过该标的
+      // 执行开仓（市价）— clOrdId 需仅字母数字
+      const side = arb.direction === 'short' ? 'sell' : 'buy';
+      const intent = {
+        id: `AUTO${Date.now()}${Math.random().toString(36).slice(2, 6)}`.toUpperCase(),
+        instId: opp.instId, side, orderType: 'market', size: qty, reduceOnly: false,
+      };
+      const result = await this.placeOrder(gateway, intent);
+      usedMargin += margin; // 更新组合占用
+      actions.push({
+        action: '自动开仓', instId: opp.instId,
+        detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，保证金 ${margin.toFixed(1)}U（组合占用 ${usedMargin.toFixed(1)}/${budget.toFixed(1)}U 上限），风险预算 ${riskBudgetPct.toFixed(1)}%权益(${riskUsd.toFixed(1)}U)`,
+      });
+      this.cooldowns.delete(opp.instId);
+    }
   }
 
   // 主入口：由私有WS事件触发（节流）或定时器兜底
@@ -77,15 +163,51 @@ export class PositionManager {
           }
         }
 
-        // —— 规则3：动态止损 ——
-        // 方向强烈(≥2.5x)且无动态 → 挂；有动态但方向转弱 → 取消（避免误锁）
-        if (conv?.mult >= 2.5 && !trailing && distLiq !== null && distLiq > 2) {
-          const activePx = side === 'long' ? mark * 1.005 : mark * 0.995; // 现价上方0.5%激活
-          await this.setTrailing(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', size: qty, callbackRatio: 0.01, activePx });
-          actions.push({ action: '挂动态止损', instId, detail: `方向强烈 ×${conv.mult}，激活 ${activePx.toFixed(2)} / 回撤1%` });
-        } else if (trailing && conv?.mult < 2 && conv?.level === '偏弱') {
-          await this.cancelAlgo(gateway, { instId, algoId: trailing.algoId });
-          actions.push({ action: '取消动态止损', instId, detail: `方向转弱（${conv.level}），移除动态止损仅保留硬止损` });
+        // —— 规则3：系统自管动态止损（实时调整，替代 OKX 黑盒 move_order_stop）——
+        // 系统跟踪持仓期间的最高价，按 ATR 自适应回调比例算触发线，用条件单实时更新
+        // 触发线只上移不下移；波动大放宽(避免被扫)、波动小收紧(锁利)
+        const peak = this.peakPrices.get(instId) || { high: mark, at: Date.now() };
+        if (mark > peak.high) { peak.high = mark; peak.at = Date.now(); this.peakPrices.set(instId, peak); }
+        // 自适应回调：1分钟级波动约 0.1-0.3%，回调取波动 × 1.2，夹在 0.3%~1.5%
+        const atrPct = await this.getAtrPct(instId).catch(() => 0.003);
+        const callback = Math.min(0.015, Math.max(0.003, atrPct * 1.2));
+        const triggerLine = side === 'long' ? peak.high * (1 - callback) : peak.high * (1 + callback);
+        // 已有动态条件单（系统自管）→ 触发线只上移：至少上移 0.5% 才更新（避免微小波动高频重挂）
+        const sysTrailing = positionAlgos.find((a) => a.ordType === 'conditional' && a.algoId && (a.tag === 'sys-trailing' || this.sysTrailingIds.has(a.algoId)));
+        const nativeTrailing = positionAlgos.find((a) => a.ordType === 'move_order_stop');
+        const currentTrigger = sysTrailing ? Number(sysTrailing.slTriggerPx || 0) : 0;
+        // 阈值 0.5%（原 0.05% 太敏感：18元标的0.05%=0.009元，任何波动都触发）
+        // 且每标的 10 分钟冷却，避免 15s ticker 高频取消+重挂（churn 产生空窗和限流）
+        const lastMove = this.lastTrailingMove.get(instId) || 0;
+        const cooldownOk = Date.now() - lastMove > 10 * 60_000;
+        const shouldUpdate = side === 'long'
+          ? triggerLine > currentTrigger * 1.005 && cooldownOk
+          : triggerLine < currentTrigger * 0.995 && cooldownOk;
+        if (conv?.mult >= 2 && distLiq !== null && distLiq > 2) {
+          // 取消 OKX 原生黑盒 move_order_stop（系统接管后不依赖它）
+          if (nativeTrailing && !sysTrailing) {
+            await this.cancelAlgo(gateway, { instId, algoId: nativeTrailing.algoId });
+            actions.push({ action: '接管动态止损', instId, detail: `取消 OKX 原生 move_order_stop（黑盒），改为系统自管条件单` });
+          }
+          if (!sysTrailing) {
+            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100 });
+            const algoId = result?.[0]?.algoId;
+            if (algoId) this.sysTrailingIds.add(algoId);
+            this.lastTrailingMove.set(instId, Date.now());
+            actions.push({ action: '挂动态止损', instId, detail: `系统自管：高点 ${peak.high.toFixed(2)} × (1-回调${(callback * 100).toFixed(2)}%) = 触发 ${triggerLine.toFixed(2)}` });
+          } else if (shouldUpdate) {
+            // 上移：取消旧的 + 挂新的（触发线只上移，锁住更多利润）
+            await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
+            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100 });
+            const newId = result?.[0]?.algoId;
+            if (newId) { this.sysTrailingIds.delete(sysTrailing.algoId); this.sysTrailingIds.add(newId); }
+            this.lastTrailingMove.set(instId, Date.now());
+            actions.push({ action: '上移动态止损', instId, detail: `高点 ${peak.high.toFixed(2)} 回调${(callback * 100).toFixed(2)}% → 触发线上移 ${currentTrigger.toFixed(2)} → ${triggerLine.toFixed(2)}（锁利）` });
+          }
+        } else if (sysTrailing && (conv?.mult < 2 || distLiq === null || distLiq <= 2)) {
+          await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
+          this.sysTrailingIds.delete(sysTrailing.algoId);
+          actions.push({ action: '取消动态止损', instId, detail: `方向转弱或清算过近，移除系统动态止损仅保留硬止损` });
         }
 
         // —— 规则4：仓位风险（自动减仓到目标风险，附数学理由）——
@@ -102,6 +224,25 @@ export class PositionManager {
             });
           }
         }
+      }
+
+      // 记录刚平仓的标的（冷却30分钟避免立即重开）
+      for (const [key, p] of this.domain.positions.entries()) {
+        if (p.accountId === account.id && Number(p.quantity) === 0 && p.instId) {
+          const instId = p.instId;
+          if (!this.cooldowns.has(instId)) this.cooldowns.set(instId, Date.now());
+        }
+      }
+      // 清理过期冷却
+      for (const [instId, ts] of this.cooldowns) { if (Date.now() - ts > 30 * 60_000) this.cooldowns.delete(instId); }
+
+      // —— 规则5：自动开单（策略信号 final + 资金充足）——
+      const opportunities = await this.getOpportunities(account).catch((e) => { process.stderr.write(`[仓位管理] getOpportunities失败: ${e?.message}\n`); return []; });
+      process.stderr.write(`[仓位管理] autoOpen信号源: ${opportunities.length}个final机会 ${opportunities.map((o) => o.instId).join(',') || '无'}\n`);
+      try {
+        await this.autoOpen({ gateway, account, opportunities, actions });
+      } catch (e) {
+        process.stderr.write(`[仓位管理] autoOpen失败: ${e?.message}\n`);
       }
 
       if (actions.length) {

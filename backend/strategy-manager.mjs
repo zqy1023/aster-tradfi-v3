@@ -31,6 +31,19 @@ const DEFAULT_STRATEGIES = [
     status: 'enabled',
     evidence: '波动率预测 IC 分年度全正; VolTarget 10/12标的Sharpe提升(详见 docs/FACTOR_RESEARCH_20260817.md)',
   },
+  {
+    key: 'short_momentum',
+    name: '4H短周期动量',
+    style: 'short_momentum',
+    assetClass: 'equity',
+    primaryTimeframe: '4H',
+    confirmationTimeframe: '1D',
+    hypothesis: 'OKX 4H 真实数据回测(2026-07~08, 40天)：30根4H动量(≈5日涨幅)≥1%时做多，持有8根(≈1.3天)，10x杠杆。257笔净+62.5% 胜率65%，三标的全正(KORU+16/SNDK+14/SNXX+32)，成本0.09%→0.2%不敏感。样本短(40天)，按规则接近度上线。',
+    entryRule: '4H收盘：过去30根动量(涨幅)≥1% → 下一根开盘做多；杠杆≤10x',
+    exitRule: '持有8根4H或止损(4H ATR×1.5)或动量转负提前退出；单标的手续费约束：月换手≤20次',
+    status: 'disabled',
+    evidence: 'OKX 4H回测257笔净+62.5% 胜率65% PF1.24(2026-07~08真实数据, 样本短待积累)',
+  },
 ];
 
 export class StrategyManager {
