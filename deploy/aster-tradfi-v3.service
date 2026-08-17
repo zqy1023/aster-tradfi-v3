@@ -1,0 +1,26 @@
+[Unit]
+Description=ASTER TradFi Workstation V3 Production
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/aster-tradfi-v3/current
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=512
+EnvironmentFile=/etc/aster-tradfi-v3.env
+EnvironmentFile=/etc/aster-tradfi-v3-live.env
+ExecStart=/usr/bin/node backend/server.mjs
+Restart=on-failure
+RestartSec=3
+MemoryHigh=640M
+MemoryMax=768M
+TasksMax=128
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/aster-tradfi-v3
+
+[Install]
+WantedBy=multi-user.target

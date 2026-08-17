@@ -1,0 +1,20 @@
+{
+  "name": "aster-tradfi-workstation-v3",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node backend/server.mjs",
+    "start:demo": "node backend/start-demo.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "echarts": "^5.5.1",
+    "klinecharts": "^10.0.0",
+    "mysql2": "^3.14.2",
+    "ws": "^8.18.0"
+  }
+}

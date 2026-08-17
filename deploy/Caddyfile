@@ -1,0 +1,26 @@
+www.wydwlh.icu {
+    redir https://wydwlh.icu{uri} permanent
+}
+
+wydwlh.icu {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:4319
+    }
+
+    root * /opt/aster-tradfi-v3/current/web
+    file_server
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+}
+
+http://69.165.67.81 {
+    redir https://wydwlh.icu{uri} permanent
+}

@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASTER TradFi · 交易员工作台</title>
+  <script src="/vendor/klinecharts.min.js"></script>
+  <script src="/vendor/echarts.min.js"></script>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#080a0d;--shell:#0d1014;--panel:#11151a;--panel-2:#171c22;--panel-3:#1d242b;
+      --line:#2a313a;--line-soft:#20262e;--text:#f4f6f8;--muted:#9aa4ae;--faint:#697481;
+      --green:#26d39c;--red:#ff667a;--amber:#f0b85a;--cyan:#62c6ff;--violet:#b79cff;--white:#ffffff;
+      --shadow:0 18px 40px rgba(0,0,0,.34);--radius:6px;--top:58px;--nav:216px;--bottom:64px;
+      font-family:Inter,"Microsoft YaHei","PingFang SC",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-size:14px;letter-spacing:0}
+    body{overflow:hidden}
+    button,input,select,textarea{font:inherit;letter-spacing:0}
+    button{cursor:pointer;color:inherit}
+    button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+    h1,h2,h3,p{margin:0}
+    h1{font-size:19px;font-weight:650}
+    h2{font-size:14px;font-weight:650}
+    h3{font-size:13px;font-weight:650}
+    .num{font-variant-numeric:tabular-nums;font-family:"SFMono-Regular",Consolas,ui-monospace,monospace}
+    .muted{color:var(--muted)}.faint{color:var(--faint)}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.cyan{color:var(--cyan)}
+    .login{position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 0,#18222c 0,#080a0d 42%,#050607 100%);z-index:20}
+    .login[hidden],.app[hidden]{display:none}
+    .login-card{width:min(420px,100%);border:1px solid var(--line);background:rgba(17,21,26,.94);box-shadow:var(--shadow);border-radius:8px;padding:26px}
+    .login-brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+    .brand-mark{width:32px;height:32px;display:grid;place-items:center;background:#f4f6f8;color:#080a0d;border-radius:5px;font-weight:800}
+    .login-card h1{font-size:22px;margin-bottom:6px}
+    .login-card p{line-height:1.55;color:var(--muted);margin-bottom:20px}
+    .field{display:grid;gap:6px;margin-bottom:12px}
+    .field label{font-size:12px;color:var(--muted)}
+    input,select,textarea{width:100%;min-height:38px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:5px;padding:8px 10px}
+    textarea{min-height:86px;resize:vertical;line-height:1.5}
+    .error{min-height:20px;color:var(--red);font-size:12px;margin:6px 0 10px}
+    .app{height:100dvh;display:grid;grid-template-rows:var(--top) 1fr}
+    .topbar{height:var(--top);display:grid;grid-template-columns:var(--nav) 1fr auto;align-items:center;border-bottom:1px solid var(--line);background:var(--shell);padding:0 14px;gap:14px}
+    .brand{display:flex;align-items:center;gap:10px;min-width:0}
+    .brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px;white-space:nowrap}
+    .health-strip{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden}
+    .health-pill{display:inline-flex;align-items:center;gap:6px;min-height:30px;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:5px 9px;color:var(--muted);white-space:nowrap}
+    .health-pill span:last-child{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+    .dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;flex:0 0 auto}
+    .dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}.dot.info{background:var(--cyan)}
+    .identity{display:flex;align-items:center;gap:9px;white-space:nowrap}
+    .identity-text{text-align:right}.identity-text small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+    .shell{display:grid;grid-template-columns:var(--nav) minmax(0,1fr);min-height:0}
+    .sidebar{background:var(--shell);border-right:1px solid var(--line);padding:12px 9px;display:flex;flex-direction:column;gap:5px}
+    .nav-btn{width:100%;min-height:42px;border:0;background:transparent;color:var(--muted);display:flex;align-items:center;gap:10px;text-align:left;border-radius:5px;padding:8px 10px}
+    .nav-btn:hover{background:var(--panel-2);color:var(--text)}
+    .nav-btn[aria-current=page]{background:#f4f6f8;color:#07090c}
+    .nav-icon{width:18px;height:18px;display:grid;place-items:center;flex:0 0 auto}
+    .nav-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
+    .nav-caption{font-size:11px;color:var(--faint);padding:12px 10px 4px}
+    .content{min-width:0;overflow:auto;background:linear-gradient(180deg,#0a0d10,#080a0d)}
+    .view{padding:14px 16px 28px}.view[hidden]{display:none}
+    .workspace-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
+    .workspace-title{display:grid;gap:5px}.workspace-title p{color:var(--muted);line-height:1.45}
+    .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .btn{min-height:36px;border:1px solid var(--line);background:var(--panel-2);border-radius:5px;padding:7px 11px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+    .btn:hover{border-color:var(--cyan);background:var(--panel-3)}
+    .btn.primary{background:#f4f6f8;border-color:#f4f6f8;color:#080a0d;font-weight:650}
+    .btn.danger{color:var(--red)}
+    .btn:disabled{opacity:.48;cursor:not-allowed}
+    .status,.chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:4px 9px;color:var(--muted);font-size:12px;white-space:nowrap}
+    .status.ok{color:var(--green)}.status.warn{color:var(--amber)}.status.bad{color:var(--red)}.status.info{color:var(--cyan)}
+    .grid{display:grid;gap:12px}.grid.two{grid-template-columns:minmax(0,1fr) 390px}.grid.three{grid-template-columns:320px minmax(0,1fr) 380px}.grid.equal{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);min-width:0;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
+    .panel-head{min-height:44px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px}
+    .panel-body{padding:12px}.tight{padding:8px 10px}
+    .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+    .metric{border:1px solid var(--line-soft);background:var(--panel-2);border-radius:5px;padding:10px;min-width:0}
+    .metric span{display:block;color:var(--muted);font-size:11px}.metric strong{display:block;margin-top:6px;font-size:20px;font-weight:650}.metric small{display:block;color:var(--faint);margin-top:5px;line-height:1.35}
+    .health-list{display:grid;gap:8px}.health-row{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:start;padding:8px;border:1px solid var(--line-soft);border-radius:5px;background:var(--panel-2)}
+    .health-row strong{font-weight:600}.health-row small{display:block;color:var(--muted);margin-top:3px;line-height:1.35}
+    .opportunity-list{display:grid;gap:8px}
+    .opp{width:100%;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;padding:11px;text-align:left;display:grid;gap:9px}
+    .opp:hover,.opp.active{border-color:var(--cyan);background:#1b2229}
+    .opp-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.opp-title strong{display:block;font-size:15px}.opp-title small{display:block;color:var(--muted);margin-top:3px}
+    .opp-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.opp-meta div{background:#0d1116;border:1px solid var(--line-soft);border-radius:4px;padding:6px}.opp-meta span{display:block;color:var(--faint);font-size:10px}.opp-meta b{display:block;margin-top:4px;font-weight:600}
+    .score{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:conic-gradient(var(--green) calc(var(--score)*1%),#29313a 0);font-weight:700}
+    .decision{display:grid;gap:10px}.decision-box{border-left:3px solid var(--cyan);background:var(--panel-2);padding:11px;border-radius:4px}.decision-box.final{border-left-color:var(--green)}.decision-box.warn{border-left-color:var(--amber)}
+    .signal{border:1px solid var(--line-soft);background:var(--panel-2);border-radius:5px;padding:9px;margin-bottom:8px}.signal-title{display:flex;justify-content:space-between;gap:8px}.signal ul{margin:8px 0 0;padding-left:18px;color:var(--muted);line-height:1.45}
+    .plan-ticket{display:grid;gap:8px}.plan-row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line-soft);padding-bottom:7px}.plan-row:last-child{border-bottom:0}.plan-row span:first-child{color:var(--muted)}
+    .terminal-layout{display:grid;grid-template-columns:270px minmax(0,1fr) 320px;gap:12px}
+    .instrument-list{max-height:calc(100dvh - 210px);overflow:auto}.instrument{width:100%;border:0;border-bottom:1px solid var(--line-soft);background:transparent;text-align:left;padding:10px 12px;display:grid;gap:5px}.instrument:hover,.instrument.active{background:var(--panel-2)}.instrument.active{border-left:3px solid var(--cyan);padding-left:9px}
+    .instrument-row{display:flex;justify-content:space-between;gap:8px}.instrument small{color:var(--muted)}
+    .kline-wrap{height:520px;position:relative}.kline{height:100%;min-height:420px}.chart-mask{position:absolute;inset:0;display:grid;place-items:center;background:rgba(17,21,26,.86);color:var(--muted)}.chart-mask[hidden]{display:none}
+    .toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}.seg button{min-height:34px;border:0;border-right:1px solid var(--line);background:var(--panel-2);padding:6px 10px;color:var(--muted)}.seg button:last-child{border-right:0}.seg button.active{background:#f4f6f8;color:#080a0d}
+    .quote-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:10px}.quote{border:1px solid var(--line-soft);background:var(--panel-2);border-radius:5px;padding:9px}.quote span{display:block;color:var(--muted);font-size:11px}.quote strong{display:block;margin-top:5px;font-size:16px}
+    .book-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.book-row,.trade-row,.list-row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line-soft)}.book-row:last-child,.trade-row:last-child,.list-row:last-child{border-bottom:0}
+    .table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:720px}.table th,.table td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap}.table th{color:var(--muted);font-size:12px;font-weight:500}.table tr:hover td{background:rgba(98,198,255,.05)}
+    .risk-ledger{display:grid;gap:10px}.breaker{border:1px solid var(--line-soft);background:var(--panel-2);border-radius:5px;padding:10px}.breaker-head{display:flex;justify-content:space-between}.bar{height:7px;background:#2a313a;border-radius:999px;overflow:hidden;margin-top:8px}.bar span{display:block;height:100%;background:var(--green)}
+    .review-grid{display:grid;grid-template-columns:330px minmax(0,1fr);gap:12px}.report-section{border:1px solid var(--line-soft);border-radius:5px;background:var(--panel-2);padding:10px;margin-bottom:10px}.report-section h3{margin-bottom:8px}.report-section ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.55}
+    .settings-grid{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:12px}.danger-note{border-left:3px solid var(--red);background:rgba(255,102,122,.08);padding:10px;border-radius:4px;color:#ffc5cc;line-height:1.5}
+    .next-action{border:1px solid var(--cyan);background:rgba(98,198,255,.07);padding:10px 12px;border-radius:5px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px}.next-action strong{color:#dff4ff}.evidence-list{display:grid;gap:4px;margin-top:7px;color:var(--muted);font-size:12px}.trigger-line{display:flex;gap:8px;align-items:center;justify-content:space-between;border-top:1px solid var(--line-soft);padding-top:8px}.research-grid{display:grid;grid-template-columns:minmax(300px,.8fr) minmax(0,1.2fr);gap:12px;margin-top:12px}.progress{height:8px;background:#29313a;border-radius:999px;overflow:hidden;margin:8px 0}.progress span{display:block;height:100%;background:var(--cyan);transition:transform .2s ease;transform-origin:left}.check-row{display:flex;align-items:center;gap:9px;min-height:44px}.check-row input{width:18px;min-height:18px}.form-error{color:#ffb2bd;min-height:20px;margin-top:6px}.trade-list{display:grid;gap:8px}.trade-card{border:1px solid var(--line-soft);background:var(--panel-2);padding:10px;border-radius:5px}.trade-card-head{display:flex;justify-content:space-between;gap:10px}.research-output ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .empty{padding:28px;text-align:center;color:var(--muted)}.empty strong{display:block;color:var(--text);margin-bottom:5px}
+    .toast{position:fixed;right:16px;bottom:16px;z-index:30;max-width:420px;border:1px solid var(--line);background:var(--panel-3);box-shadow:var(--shadow);padding:11px 13px;border-radius:6px;color:var(--text)}.toast[hidden]{display:none}
+    .confirm-dialog{width:min(560px,calc(100vw - 24px));border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:7px;padding:0;box-shadow:var(--shadow)}
+    .confirm-dialog::backdrop{background:rgba(0,0,0,.72)}.confirm-dialog .dialog-body{padding:14px}.confirm-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--line);padding:12px 14px}
+    .confirm-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}.confirm-fact{border:1px solid var(--line-soft);background:var(--panel-2);padding:9px;border-radius:5px}.confirm-fact span{display:block;color:var(--muted);font-size:11px}.confirm-fact strong{display:block;margin-top:5px}
+    @media(max-width:1260px){.grid.three,.terminal-layout{grid-template-columns:250px minmax(0,1fr)}.grid.three>.panel:last-child,.terminal-layout>.panel:last-child{grid-column:1/-1}.grid.two,.settings-grid,.review-grid{grid-template-columns:1fr}.metric-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:860px){body{overflow:auto}.app{height:auto;min-height:100dvh;display:block;padding-bottom:var(--bottom)}.topbar{position:sticky;top:0;z-index:10;grid-template-columns:1fr auto;height:auto;min-height:58px}.health-strip{grid-column:1/-1;overflow:auto;padding-bottom:8px}.shell{display:block}.sidebar{position:fixed;left:0;right:0;bottom:0;z-index:12;height:var(--bottom);display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);border-right:0;padding:6px;background:var(--shell)}.nav-caption,.nav-btn .label-secondary{display:none}.nav-btn{min-height:52px;justify-content:center;text-align:center;padding:4px}.nav-btn span:last-child{font-size:11px}.content{overflow:visible}.view{padding:12px 10px 20px}.workspace-head{flex-direction:column}.grid.three,.terminal-layout,.grid.equal,.research-grid{grid-template-columns:1fr}.instrument-list{max-height:310px}.kline-wrap{height:430px}.identity-text small,.brand small{display:none}.review-grid,.settings-grid{grid-template-columns:1fr}.next-action{align-items:flex-start;flex-direction:column}.confirm-dialog{width:100%;max-width:none;margin:auto 0 0;border-radius:7px 7px 0 0}.confirm-dialog .dialog-actions .btn{min-height:44px;flex:1}}
+    @media(max-width:430px){html,body{font-size:13px}.topbar{padding:8px 10px}.health-pill{min-height:28px;padding:4px 8px}.metric-grid,.quote-strip,.opp-meta{grid-template-columns:repeat(2,1fr)}.book-grid{grid-template-columns:1fr}.kline-wrap{height:380px}.panel-head{align-items:flex-start;flex-direction:column}.toolbar{width:100%}.seg{width:100%;display:grid;grid-template-columns:repeat(4,1fr)}.seg button{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:7px 4px}.actions{width:100%}.actions .btn{flex:1 1 120px}.login-card{padding:20px}.table{min-width:650px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body data-auth="checking">
+  <section class="login" id="login" hidden>
+    <form class="login-card" id="login-form">
+      <div class="login-brand"><div class="brand-mark">A</div><div><strong>ASTER TradFi</strong><div class="muted">独立账号登录</div></div></div>
+      <h1>进入交易员工作台</h1>
+      <p>所有 OKX 账户、订单、复盘和策略记录按平台账号隔离。</p>
+      <div class="field"><label for="login-username">账号</label><input id="login-username" name="username" autocomplete="username" required></div>
+      <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+      <div class="error" id="login-error" role="alert"></div>
+      <button class="btn primary" id="login-submit" type="submit" style="width:100%">登录</button>
+    </form>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark">A</div><div><strong>ASTER TradFi</strong><small>OKX 美股永续量化工作台 · V3</small></div></div>
+      <div class="health-strip" id="health-strip"></div>
+      <div class="identity"><div class="identity-text"><span id="user-name">平台用户</span><small id="user-role">--</small></div><button class="btn" id="logout" type="button">退出</button></div>
+    </header>
+    <div class="shell">
+      <nav class="sidebar" aria-label="主导航">
+        <div class="nav-caption">任务流</div>
+        <button class="nav-btn" data-view="opportunities" aria-current="page"><span class="nav-icon" data-icon="radar"></span><span>机会</span></button>
+        <button class="nav-btn" data-view="cockpit"><span class="nav-icon" data-icon="chart"></span><span>驾驶舱</span></button>
+        <button class="nav-btn" data-view="live"><span class="nav-icon" data-icon="bolt"></span><span>实盘</span></button>
+        <button class="nav-btn" data-view="review"><span class="nav-icon" data-icon="report"></span><span>复盘</span></button>
+        <button class="nav-btn" data-view="settings"><span class="nav-icon" data-icon="settings"></span><span>设置</span></button>
+      </nav>
+      <main class="content" id="content">
+        <section class="view" id="view-opportunities">
+          <div class="workspace-head"><div class="workspace-title"><h1>机会雷达</h1><p>按市场状态、策略证据和风控门槛筛选 OKX TradFi 美股永续合约。</p></div><div class="actions"><span class="status info" id="clock">北京时间 --</span><button class="btn" id="refresh-workstation">刷新工作台</button></div></div>
+          <div class="next-action"><div><strong>当前建议动作</strong><div class="muted" id="next-action-copy">正在检查账户、行情与策略触发状态</div></div><button class="btn" id="next-action-button" type="button">查看详情</button></div>
+          <div class="grid three">
+            <section class="panel"><div class="panel-head"><h2>市场状态</h2><span class="status" id="market-regime">检查中</span></div><div class="panel-body" id="market-state"></div></section>
+            <section class="panel"><div class="panel-head"><h2>OKX 真实成交额 Top5</h2><span class="chip" id="opportunity-count">--</span></div><div class="panel-body"><div class="opportunity-list" id="opportunity-list"></div></div></section>
+            <section class="panel"><div class="panel-head"><h2>策略仲裁与计划</h2><span class="status warn" id="arbiter-state">等待选择</span></div><div class="panel-body"><div class="decision" id="decision-panel"></div></div></section>
+          </div>
+          <div class="research-grid">
+            <section class="panel"><div class="panel-head"><h2>策略管理</h2><span class="chip" id="strategy-count">6 个策略</span></div><div class="panel-body"><div id="strategy-list" class="trade-list"><div class="empty">正在加载策略…</div></div></div></section>
+            <section class="panel"><div class="panel-head"><h2>研究证据与候选</h2><span class="chip" id="research-stage">尚未运行</span></div><div class="panel-body research-output" id="research-output"><div class="empty">创建研究任务后，这里会显示八阶段进度、入场/退出规则、限制和准入状态。</div></div></section>
+          </div>
+        </section>
+
+        <section class="view" id="view-cockpit" hidden>
+          <div class="workspace-head"><div class="workspace-title"><h1>行情驾驶舱</h1><p>价格、盘口、逐笔和 K 线来自 OKX；K 线使用 KLineChart v10 本地包。</p></div><div class="actions"><span class="status" id="market-source">等待行情</span><span class="status" id="latency">--</span></div></div>
+          <div class="terminal-layout">
+            <section class="panel"><div class="panel-head"><h2>合约池</h2><select id="asset-filter"><option value="equity">股票</option><option value="">全部</option><option value="index">指数</option><option value="fx">外汇</option><option value="metal">贵金属</option><option value="commodity">大宗商品</option></select></div><div class="panel-body" style="padding-bottom:6px"><label class="sr-only" for="instrument-search">搜索合约</label><input id="instrument-search" type="search" placeholder="搜索代码或名称" autocomplete="off"></div><div class="instrument-list" id="instrument-list"></div></section>
+            <section class="panel"><div class="panel-head"><div><h2 id="chart-title">选择合约</h2><div class="muted num" id="chart-meta">等待 OKX 数据</div></div><div class="toolbar"><div class="seg" id="timeframes"><button data-bar="1m">1m</button><button data-bar="5m">5m</button><button data-bar="15m">15m</button><button data-bar="1H">1H</button><button data-bar="4H" class="active">4H</button><button data-bar="1D">1D</button><button data-bar="1W">1W</button></div><select id="indicator-select"><option value="VOL">VOL</option><option value="MA">MA</option><option value="EMA">EMA</option><option value="BOLL">BOLL</option><option value="MACD">MACD</option><option value="RSI">RSI</option></select></div></div><div class="panel-body"><div class="kline-wrap"><div class="kline" id="kline-chart"></div><div class="chart-mask" id="chart-mask">等待历史 K 线入库</div></div><div class="quote-strip" id="quote-strip"></div></div></section>
+            <section class="panel"><div class="panel-head"><h2>订单流</h2><span class="chip">books5 / trades</span></div><div class="panel-body"><div class="book-grid"><div><h3>买盘</h3><div id="bids"></div></div><div><h3>卖盘</h3><div id="asks"></div></div></div><div class="report-section" style="margin-top:12px"><h3>逐笔成交</h3><div id="trades"></div></div><div class="report-section"><h3>数据时间</h3><div id="market-times" class="muted"></div></div></div></section>
+          </div>
+        </section>
+
+        <section class="view" id="view-live" hidden>
+          <div class="workspace-head"><div class="workspace-title"><h1>实盘工作区</h1><p id="live-mode-copy">正在核对实盘提交状态。</p></div><div class="actions"><span class="status warn" id="private-source">等待私有连接</span><button class="btn" id="refresh-live">刷新订单/持仓</button></div></div>
+          <div class="grid two">
+            <section class="panel"><div class="panel-head"><h2>风险中心</h2><span class="status" id="risk-state">--</span></div><div class="panel-body"><div class="metric-grid" id="risk-metrics"></div><div class="risk-ledger" id="risk-breakers" style="margin-top:10px"></div></div></section>
+            <section class="panel"><div class="panel-head"><h2>当前持仓</h2><span class="chip">OKX positions</span></div><div class="table-wrap" id="positions"></div></section>
+          </div>
+          <div class="grid two" style="margin-top:12px"><section class="panel"><div class="panel-head"><h2>活动订单</h2><span class="chip">OKX orders</span></div><div class="table-wrap" id="exchange-orders"></div></section><section class="panel"><div class="panel-head"><h2>成交回报</h2><span class="chip">OKX fills</span></div><div class="table-wrap" id="fills"></div></section></div>
+          <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>新建订单 · 风控预检</h2><span class="status warn">硬门禁</span></div><div class="panel-body"><form id="order-form"><div class="grid equal"><div class="field"><label for="order-account">账户</label><select id="order-account"></select></div><div class="field"><label for="order-inst">合约</label><select id="order-inst"></select></div><div class="field"><label for="order-side">方向</label><select id="order-side"><option value="buy">买入/做多</option><option value="sell">卖出/做空</option></select></div></div><div class="grid equal"><div class="field"><label for="order-type">订单类型</label><select id="order-type"><option value="limit">限价</option><option value="market">市价</option></select></div><div class="field"><label for="order-size">数量（张）</label><input id="order-size" type="number" min="0" step="0.0001" value="1"></div><div class="field"><label for="order-price">价格</label><input id="order-price" type="number" min="0" step="0.0001" placeholder="市价单使用最新价预检"></div></div><div class="grid equal"><div class="field"><label for="order-stop">止损触发价</label><input id="order-stop" type="number" min="0" step="0.0001" placeholder="新开仓必填"></div><div class="field"><label for="order-target">止盈触发价</label><input id="order-target" type="number" min="0" step="0.0001" placeholder="可选"></div></div><label class="check-row" for="order-reduce-only"><input id="order-reduce-only" type="checkbox">只减仓（不增加现有敞口）</label><div class="field"><label for="order-key">幂等键</label><input id="order-key" value="plan-preview-001"></div><div class="actions"><button class="btn" type="button" id="precheck">运行预检</button><button class="btn primary" id="order-submit" type="submit" disabled>核对后提交</button></div></form><div class="decision-box warn" id="risk-check" role="status" style="margin-top:12px">尚未预检</div><div class="danger-note" id="live-mode-note" style="margin-top:12px">正在读取实盘开关；系统不实现任何提现接口。</div></div></section>
+        </section>
+
+        <section class="view" id="view-review" hidden>
+          <div class="workspace-head"><div class="workspace-title"><h1>复盘中心</h1><p>报告必须从 OKX 成交事实生成；没有成交事实时不编造收益。</p></div><div class="actions"><span class="status" id="review-state">等待数据</span><div class="actions" style="display:flex;gap:6px;align-items:center"><button class="btn" id="review-prev" type="button" title="前一天">‹</button><input type="date" id="review-date" style="width:150px;min-height:32px"><button class="btn" id="review-next" type="button" title="后一天">›</button><button class="btn" id="review-today" type="button">最近</button></div></div></div>
+          <div class="review-grid">
+            <section class="panel"><div class="panel-head"><h2>五层报告</h2><span class="chip">单日/单笔</span></div><div class="panel-body" id="review-summary"></div></section>
+            <section class="panel"><div class="panel-head"><h2>归因与改进</h2><span class="chip">非订单列表</span></div><div class="panel-body" id="review-detail"></div></section>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings" hidden>
+          <div class="workspace-head"><div class="workspace-title"><h1>账户与设置</h1><p>平台账号独立登录，每个用户绑定自己的 OKX 实盘账户，租户内数据隔离。</p></div><div class="actions"><button class="btn" id="refresh-accounts">刷新账户</button></div></div>
+          <div class="settings-grid">
+            <section class="panel"><div class="panel-head"><h2>已绑定账户</h2><span class="chip">隔离账户</span></div><div class="panel-body" id="accounts-list"></div></section>
+            <section class="panel"><div class="panel-head"><h2>绑定 OKX 账户</h2><span class="status warn">凭证加密保存</span></div><div class="panel-body"><form id="account-form"><div class="field"><label>账户名称</label><input id="account-name" required placeholder="Kevin · OKX 实盘"></div><div class="field"><label>环境</label><select id="account-env"><option value="demo">模拟</option><option value="live">实盘</option></select></div><div id="live-credentials" hidden><div class="field"><label>API Key</label><input id="account-api-key" autocomplete="off"></div><div class="field"><label>Secret Key</label><input id="account-secret-key" autocomplete="off" type="password"></div><div class="field"><label>Passphrase</label><input id="account-passphrase" autocomplete="off" type="password"></div></div><button class="btn primary" type="submit" style="width:100%">保存绑定</button></form><div class="danger-note" style="margin-top:12px">建议在 OKX 后台撤销提现权限，只保留读取和交易；当前系统也会在代码层阻断提现能力。</div></div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog class="confirm-dialog" id="order-confirm-dialog" aria-labelledby="confirm-title">
+    <div class="dialog-body"><h2 id="confirm-title">二次确认订单意图</h2><p class="muted" id="confirm-mode-copy" style="margin-top:7px;line-height:1.5">正在核对实盘提交状态。</p><div class="confirm-facts" id="confirm-facts"></div><div class="danger-note">确认合约、方向、数量、预检价和成本估算后再继续。参数变化会强制重新预检。</div></div>
+    <div class="dialog-actions"><button class="btn" id="cancel-order-intent" type="button">返回修改</button><button class="btn primary" id="confirm-order-intent" type="button">确认写入</button></div>
+  </dialog>
+
+  <script>
+  (() => {
+    const $ = (q, root = document) => root.querySelector(q);
+    const $$ = (q, root = document) => [...root.querySelectorAll(q)];
+    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, chartStream: null, privateStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
+    const icons = {
+      radar:'<svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M12 3v3M21 12h-3M12 18v3M6 12H3"/><path d="m12 12 5-5"/></svg>',
+      chart:'<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 3-4 3 2 4-7"/></svg>',
+      bolt:'<svg viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></svg>',
+      report:'<svg viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5M10 13h6M10 17h6"/></svg>',
+      settings:'<svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2 2 0 0 1-2.83 2.83l-.04-.04A1.8 1.8 0 0 0 15 19.4a1.8 1.8 0 0 0-1 .6 1.8 1.8 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.06A1.8 1.8 0 0 0 8.6 19.4a1.8 1.8 0 0 0-1.98.36l-.04.04a2 2 0 0 1-2.83-2.83l.04-.04A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-.6-1 1.8 1.8 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.06A1.8 1.8 0 0 0 4.6 8.6a1.8 1.8 0 0 0-.36-1.98l-.04-.04a2 2 0 0 1 2.83-2.83l.04.04A1.8 1.8 0 0 0 9 4.6c.38-.16.7-.38 1-.6.3-.28.45-.7.45-1.1V3a2 2 0 0 1 4 0v.06c0 .4.16.82.45 1.1.3.22.62.44 1 .6a1.8 1.8 0 0 0 1.98-.36l.04-.04a2 2 0 0 1 2.83 2.83l-.04.04A1.8 1.8 0 0 0 19.4 9c.16.38.38.7.6 1 .28.3.7.45 1.1.45H21a2 2 0 0 1 0 4h-.06c-.4 0-.82.16-1.1.45-.22.3-.44.62-.44 1.1z"/></svg>'
+    };
+    $$('[data-icon]').forEach(node => { node.innerHTML = icons[node.dataset.icon] || ''; });
+    const esc = (value = '') => String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const fmt = (value, digits = 2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString('zh-CN', { maximumFractionDigits: digits, minimumFractionDigits: digits }) : '--';
+    const signed = (value, digits = 2, suffix = '') => Number.isFinite(Number(value)) ? `${Number(value) >= 0 ? '+' : ''}${fmt(value, digits)}${suffix}` : '--';
+    const api = async (url, options = {}) => {
+      const response = await fetch(url, { credentials: 'include', headers: { 'content-type': 'application/json' }, ...options });
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      if (!response.ok) {
+        const error = new Error(payload.error || `请求失败 ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    };
+    const toast = (message) => { const node = $('#toast'); node.textContent = message; node.hidden = false; clearTimeout(node.timer); node.timer = setTimeout(() => node.hidden = true, 3600); };
+    const dotClass = (stateValue) => stateValue === 'live' || stateValue === 'connected' || stateValue === 'normal' || stateValue === 'live/partial' ? '' : stateValue === 'partial' || stateValue === 'waiting' || stateValue === 'stale' ? 'warn' : 'bad';
+    const barToPeriod = (bar) => ({ '1m': { type:'minute', span:1 }, '5m': { type:'minute', span:5 }, '15m': { type:'minute', span:15 }, '1H': { type:'hour', span:1 }, '4H': { type:'hour', span:4 }, '1D': { type:'day', span:1 }, '1W': { type:'week', span:1 } }[bar] || { type:'hour', span:4 });
+    const toKline = (candles = []) => candles.filter(c => Number.isFinite(Number(c.close))).map(c => ({ timestamp: Number(c.ts), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), volume: Number(c.volume || 0), confirm: Boolean(c.confirm) }));
+
+    function showLogin(message = '') {
+      document.body.dataset.auth = 'login';
+      $('#app').hidden = true;
+      $('#login').hidden = false;
+      $('#login-error').textContent = message;
+    }
+    function enterApp(user) {
+      state.user = user;
+      $('#login').hidden = true;
+      $('#app').hidden = false;
+      document.body.dataset.auth = 'ok';
+      $('#user-name').textContent = user.displayName || user.username || '平台用户';
+      $('#user-role').textContent = user.role || '--';
+    }
+
+    function navigate(view) {
+      state.view = view;
+      $$('.view').forEach(section => { section.hidden = section.id !== `view-${view}`; });
+      $$('.nav-btn').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
+      if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
+      if (view === 'cockpit') ensureChart();
+      if (view === 'live') loadLive().catch(err => toast(err.message));
+      if (view === 'review') loadReview(state.reviewDate || '').catch(err => toast(err.message));
+      if (view === 'settings') loadAccounts().catch(err => toast(err.message));
+      if (matchMedia('(max-width: 860px)').matches) window.scrollTo({ top: 0, behavior: 'instant' });
+      else $('#content').scrollTop = 0;
+    }
+
+    function renderHealth() {
+      const items = state.workstation?.marketState?.dataHealth || [];
+      const liveTrading = state.runtime?.liveTrading === true;
+      const trading = `<span class="health-pill"><i class="dot ${liveTrading ? 'bad' : 'warn'}"></i><span>实盘提交</span><span>${liveTrading ? '已开启' : '已关闭'}</span></span>`;
+      $('#health-strip').innerHTML = trading + items.map(item => `<span class="health-pill"><i class="dot ${dotClass(item.state)}"></i><span>${esc(item.source)}</span><span>${esc(item.state)}</span></span>`).join('');
+    }
+
+    function renderRuntimeMode() {
+      const liveTrading = state.runtime?.liveTrading === true;
+      $('#live-mode-copy').textContent = liveTrading ? '订单和持仓来自已绑定 OKX 账户；风控通过并二次确认后，订单将发送到 OKX 实盘。' : '订单和持仓来自已绑定 OKX 账户；当前只允许预检和写入订单意图。';
+      $('#live-mode-note').textContent = liveTrading ? '实盘提交已开启：最终确认会向 OKX 发送真实订单。系统不实现任何提现接口。' : '实盘提交已关闭：最终确认只写入订单意图，不会向 OKX 发送订单。系统不实现任何提现接口。';
+      $('#order-submit').textContent = liveTrading ? '预检后发送实盘' : '写入订单意图';
+      $('#confirm-title').textContent = liveTrading ? '确认发送 OKX 实盘订单' : '二次确认订单意图';
+      $('#confirm-mode-copy').textContent = liveTrading ? '这是最终实盘确认。继续后，系统会把经过风控的订单发送到当前绑定的 OKX 实盘账户。' : '本步骤只写入经过预检的订单意图，不会向 OKX 发送订单。';
+      $('#confirm-order-intent').textContent = liveTrading ? '确认发送实盘' : '确认写入';
+    }
+
+    function renderMarketState() {
+      const m = state.workstation.marketState;
+      $('#clock').textContent = `北京时间 ${m.beijingTime}`;
+      $('#market-regime').textContent = `${m.label} · 证据完整度 ${m.confidence}%`;
+      $('#market-regime').className = `status ${m.confidence >= 65 ? 'ok' : m.confidence >= 45 ? 'warn' : 'bad'}`;
+      $('#market-state').innerHTML = `
+        <div class="metric-grid">
+          <div class="metric"><span>美股时段</span><strong>${esc(m.session.label)}</strong><small>${esc(m.session.risk)}</small></div>
+          <div class="metric"><span>发现合约</span><strong>${m.breadth.discovered}</strong><small>股票池 ${m.breadth.equities} 个</small></div>
+          <div class="metric"><span>可执行机会</span><strong>${m.breadth.executable}</strong><small>需两个策略同向</small></div>
+          <div class="metric"><span>平均止损距离</span><strong>${m.breadth.avgAtrStopPct === null ? '--' : fmt(m.breadth.avgAtrStopPct, 2) + '%'}</strong><small>按 ATR 估算</small></div>
+        </div>
+        <div class="report-section" style="margin-top:10px"><h3>${esc(m.confidenceLabel || '数据证据完整度')}</h3><div class="evidence-list">${(m.confidenceBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}</div></div>
+        <div class="report-section"><h3>大盘/个股趋势矩阵</h3>${m.trendMatrix.length ? m.trendMatrix.map(row => `<div class="list-row"><span>${esc(row.underlying)} · ${esc(row.day)} / ${esc(row.fourHour)}</span><strong>${esc(row.decision)}</strong></div>`).join('') : '<div class="empty">等待 OKX 股票合约行情</div>'}</div>
+        <div class="report-section"><h3>事件与成本</h3>${m.macro.map(x => `<div class="list-row"><div><strong>${esc(x.name)}</strong><div class="muted">${esc(x.action)}</div></div><span class="status ${x.state === 'live' ? 'ok' : x.state === 'partial' ? 'warn' : 'bad'}">${esc(x.state)}</span></div>`).join('')}</div>
+        <div class="health-list">${m.dataHealth.map(item => `<div class="health-row"><i class="dot ${dotClass(item.state)}"></i><div><strong>${esc(item.source)}</strong><small>${esc(item.message)}</small></div><span class="status ${dotClass(item.state) ? 'warn' : 'ok'}">${esc(item.state)}</span></div>`).join('')}</div>`;
+      const accountReady = state.accounts.some(account => account.status === 'connected');
+      const selected = (state.workstation.opportunities || []).find(item => item.instId === state.selectedInst) || state.workstation.selected;
+      const copy = !accountReady ? '先到设置绑定并验证自己的 OKX 账户' : selected?.trigger?.blockers?.length ? `${selected.underlying}：${selected.trigger.label}；下一项：${selected.trigger.blockers[0]}` : selected?.state === '可执行' ? `${selected.underlying} 已满足双策略同向，先核对计划和风险，再进入实盘预检` : '账户和行情正常，等待候选进入明确触发区';
+      $('#next-action-copy').textContent = copy;
+      $('#next-action-button').textContent = !accountReady ? '去绑定账户' : selected?.state === '可执行' ? '核对计划' : '查看K线';
+      $('#next-action-button').onclick = () => navigate(!accountReady ? 'settings' : selected?.state === '可执行' ? 'opportunities' : 'cockpit');
+    }
+
+    function renderOpportunities() {
+      const items = state.workstation.opportunities || [];
+      $('#opportunity-count').textContent = `${items.length} 个候选`;
+      $('#opportunity-list').innerHTML = items.length ? items.map(item => `
+        <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
+          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} · ${esc(item.state)}</strong><small>${esc(item.instId)} · ${esc(item.displayName)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
+          <div class="opp-meta">
+            <div><span>价格</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
+            <div><span>24h</span><b class="num ${item.change24h >= 0 ? 'green' : 'red'}">${signed(item.change24h, 2, '%')}</b></div>
+            <div><span>成交额</span><b class="num">${fmt(item.volume24h, 0)}</b></div>
+            <div><span>仲裁</span><b>${esc(item.arbitration.label)}</b></div>
+          </div>
+          <div class="trigger-line"><strong>${esc(item.trigger?.label || '等待触发计算')}</strong><span class="muted">${esc(item.trigger?.blockers?.[0] || '条件已满足')}</span></div>
+          <div class="evidence-list"><span>${esc(item.scoreLabel || '规则分')}：${esc((item.scoreBasis || []).join('；'))}</span></div>
+        </button>`).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
+      $$('.opp').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
+    }
+
+    function renderDecision() {
+      const item = (state.workstation.opportunities || []).find(x => x.instId === state.selectedInst) || state.workstation.selected;
+      if (!item) { $('#decision-panel').innerHTML = '<div class="empty">等待机会数据</div>'; return; }
+      const final = item.arbitration.decision.startsWith('final');
+      $('#arbiter-state').textContent = item.arbitration.label;
+      $('#arbiter-state').className = `status ${final ? 'ok' : item.arbitration.decision === 'watch' ? 'warn' : 'info'}`;
+      const p = item.plan || {};
+      $('#decision-panel').innerHTML = `
+        <div class="decision-box ${final ? 'final' : 'warn'}"><h3>${esc(item.underlying)} · ${esc(item.arbitration.label)}</h3><div class="muted" style="margin-top:6px">${esc(item.arbitration.reason)} · ${esc(item.arbitration.confidenceLabel || '证据完整度')} ${item.arbitration.confidence}%</div><div class="evidence-list">${(item.arbitration.confidenceBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}</div></div>
+        <div class="decision-box"><div class="trigger-line"><strong>${esc(item.trigger?.label || '尚未生成触发距离')}</strong><span>${item.trigger?.blockers?.length ? `${item.trigger.blockers.length} 项未满足` : '条件已满足'}</span></div>${item.trigger?.blockers?.length ? `<ul>${item.trigger.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul>` : '<div class="green" style="margin-top:8px">触发条件无阻塞项</div>'}</div>
+        <div>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)} · ${esc(signal.direction)}</span></div><div class="evidence-list">${(signal.scoreBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}<span>触发距离：${signal.triggerDistancePct === null ? '--' : signed(signal.triggerDistancePct, 2, '%')}</span></div><ul>${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
+        <div class="report-section plan-ticket"><h3>交易计划票据</h3>
+          <div class="plan-row"><span>状态</span><strong>${esc(p.status || '--')}</strong></div>
+          <div class="plan-row"><span>入场区</span><strong class="num">${p.entryZone ? p.entryZone.map(x => fmt(x, 4)).join(' - ') : '--'}</strong></div>
+          <div class="plan-row"><span>止损</span><strong class="num">${p.stop ? fmt(p.stop, 4) : '--'}</strong></div>
+          <div class="plan-row"><span>目标1 / 目标2</span><strong class="num">${p.target1 ? fmt(p.target1, 4) : '--'} / ${p.target2 ? fmt(p.target2, 4) : '--'}</strong></div>
+          <div class="plan-row"><span>R倍数</span><strong>${p.riskReward ? `${fmt(p.riskReward.target1R, 2)}R / ${fmt(p.riskReward.target2R, 2)}R` : '--'}</strong></div>
+          <div class="plan-row"><span>失效条件</span><strong>${esc(p.invalidation || '--')}</strong></div>
+          <div class="plan-row"><span>仓位提示</span><strong>${p.positionHint ? `权益 ${p.positionHint.maxEquityPct}% · 单笔风险 ${p.positionHint.riskPerTradePct}%` : '--'}</strong></div>
+        </div>
+        <div class="actions"><button class="btn primary" id="open-cockpit">打开K线</button><button class="btn" id="copy-to-order">同步到预检</button></div>`;
+      $('#open-cockpit').onclick = () => { selectInstrument(item.instId, { goCockpit: true }); };
+      $('#copy-to-order').onclick = () => { fillOrderFromPlan(item); navigate('live'); };
+    }
+
+    function renderInstruments() {
+      const asset = $('#asset-filter')?.value || 'equity';
+      const query = ($('#instrument-search')?.value || '').trim().toUpperCase();
+      const marketById = new Map(state.marketItems.map(item => [item.instId, item]));
+      const list = state.instruments.filter(item => (!asset || item.assetClass === asset) && (!query || `${item.instId} ${item.underlying} ${item.displayName}`.toUpperCase().includes(query))).sort((a, b) => Number(marketById.get(b.instId)?.volume24h || 0) - Number(marketById.get(a.instId)?.volume24h || 0));
+      $('#instrument-list').innerHTML = list.map(item => {
+        const snapshot = marketById.get(item.instId);
+        return `<button class="instrument ${state.selectedInst === item.instId ? 'active' : ''}" data-inst="${esc(item.instId)}"><div class="instrument-row"><strong>${esc(item.underlying)}</strong><span class="num">${snapshot?.last ? fmt(snapshot.last, Number(snapshot.last) < 10 ? 5 : 2) : '--'}</span></div><div class="instrument-row"><small>${esc(item.instId)}</small><small class="${snapshot?.change24h >= 0 ? 'green' : 'red'}">${snapshot ? signed(snapshot.change24h, 2, '%') : '--'}</small></div></button>`;
+      }).join('');
+      $$('.instrument').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
+    }
+
+    function selectInstrument(instId, { goCockpit = false } = {}) {
+      if (!instId) return;
+      state.selectedInst = instId;
+      if ($('#order-inst')?.options?.length && [...$('#order-inst').options].some(option => option.value === instId)) $('#order-inst').value = instId;
+      renderOpportunities();
+      renderInstruments();
+      renderDecision();
+      if (goCockpit) navigate('cockpit');
+      loadMarketDetail().catch(error => { if (error.name !== 'AbortError') toast(error.message); });
+    }
+
+    function ensureChart() {
+      if (state.chart || !window.klinecharts) return;
+      state.chart = window.klinecharts.init('kline-chart', {
+        timezone: 'Asia/Shanghai',
+        styles: {
+          grid: { horizontal: { color: '#20262e' }, vertical: { color: '#181e25' } },
+          candle: { bar: { upColor: '#26d39c', downColor: '#ff667a', noChangeColor: '#697481', upBorderColor: '#26d39c', downBorderColor: '#ff667a', upWickColor: '#26d39c', downWickColor: '#ff667a' }, priceMark: { last: { line: { color: '#62c6ff' }, text: { backgroundColor: '#62c6ff', color: '#071013' } } } },
+          xAxis: { tickText: { color: '#9aa4ae' }, axisLine: { color: '#2a313a' } },
+          yAxis: { tickText: { color: '#9aa4ae' }, axisLine: { color: '#2a313a' } },
+          crosshair: { horizontal: { line: { color: '#62c6ff' }, text: { backgroundColor: '#20262e' } }, vertical: { line: { color: '#62c6ff' }, text: { backgroundColor: '#20262e' } } },
+        },
+      });
+      state.chart.createIndicator('VOL', false);
+      state.chart.createIndicator('MA', true);
+      state.chart.setDataLoader({
+        getBars: async ({ callback }) => {
+          const detail = await api(`/api/v3/markets/${encodeURIComponent(state.selectedInst)}?bar=${encodeURIComponent(state.selectedBar)}`);
+          renderMarketDetail(detail);
+          callback(toKline(detail.candles), { more: false });
+        },
+        subscribeBar: ({ callback }) => {
+          state.chartStream?.close();
+          if (!state.selectedInst) return;
+          const source = new EventSource(`/api/v3/markets/stream?instId=${encodeURIComponent(state.selectedInst)}&bar=${encodeURIComponent(state.selectedBar)}`);
+          source.onmessage = event => {
+            try {
+              const detail = JSON.parse(event.data);
+              if (detail?.instrument?.instId !== state.selectedInst) return;
+              renderMarketDetail(detail);
+              const candle = toKline(detail.candles).at(-1);
+              if (candle) callback(candle);
+            } catch {}
+          };
+          source.onerror = () => { $('#market-source').textContent = '行情流重连中'; $('#market-source').className = 'status warn'; };
+          state.chartStream = source;
+        },
+        unsubscribeBar: () => { state.chartStream?.close(); state.chartStream = null; },
+      });
+    }
+
+    function refreshChartData() {
+      ensureChart();
+      if (!state.chart || !state.selectedInst) return;
+      const instrument = state.instruments.find(x => x.instId === state.selectedInst);
+      const precision = Number(instrument?.tickSize) < 0.01 ? 5 : 2;
+      state.chart.setSymbol({ ticker: state.selectedInst, name: instrument?.underlying || state.selectedInst, pricePrecision: precision, volumePrecision: 2 });
+      state.chart.setPeriod(barToPeriod(state.selectedBar));
+    }
+
+    async function loadMarketDetail() {
+      if (!state.selectedInst) return;
+      ensureChart();
+      $('#chart-mask').hidden = false;
+      $('#chart-mask').textContent = '正在加载 OKX K 线';
+      refreshChartData();
+    }
+
+    function renderMarketDetail(detail) {
+      if (!detail?.instrument || detail.instrument.instId !== state.selectedInst) return;
+      const s = detail.snapshot || {};
+      const digits = Number(s.last) < 10 ? 5 : 2;
+      $('#chart-mask').hidden = Boolean(detail.candles?.length);
+      $('#chart-title').textContent = `${detail.instrument.underlying} · ${detail.instrument.displayName}`;
+      $('#chart-meta').textContent = `${detail.instrument.instId} · ${detail.timeframe} · ${detail.candleCount ?? detail.candles?.length ?? 0} 根K线 · 乘数 ${detail.instrument.contractSize}`;
+      const sourceLabel = detail.gateway.status === 'connected' ? 'OKX 实时行情' : detail.gateway.status === 'demo' ? '演示行情（非交易所）' : '行情异常';
+      $('#market-source').textContent = sourceLabel;
+      $('#market-source').className = `status ${detail.gateway.status === 'connected' ? 'ok' : 'warn'}`;
+      $('#latency').textContent = detail.gateway.latencyMs !== null ? `${detail.gateway.latencyMs} ms` : '待测';
+      const funding = Number(detail.funding?.fundingRate);
+      $('#quote-strip').innerHTML = [['最新', fmt(s.last, digits)], ['买一', fmt(s.bid, digits)], ['卖一', fmt(s.ask, digits)], ['24h变化', signed(s.change24h, 2, '%')], ['24h量', fmt(s.volume24h, 0)], ['资金费', Number.isFinite(funding) ? signed(funding * 100, 4, '%') : '--']].map(([a,b]) => `<div class="quote"><span>${a}</span><strong class="num">${b}</strong></div>`).join('');
+      const rows = (side) => detail.depth?.[side]?.length ? detail.depth[side].map(x => `<div class="book-row num"><span>${fmt(x[0], digits)}</span><span>${fmt(x[1], 2)}</span></div>`).join('') : '<div class="muted">等待 books5</div>';
+      $('#bids').innerHTML = rows('bids');
+      $('#asks').innerHTML = rows('asks');
+      $('#trades').innerHTML = detail.trades?.length ? detail.trades.slice(0, 16).map(t => `<div class="trade-row num"><span class="${t.side === 'buy' ? 'green' : 'red'}">${t.side === 'buy' ? '买' : '卖'} ${fmt(t.price, digits)}</span><span>${fmt(t.size, 2)}</span></div>`).join('') : '<div class="muted">等待 trades</div>';
+      const sourceTime = detail.depth?.sourceTs || s.sourceTs;
+      $('#market-times').innerHTML = `行情时间：${sourceTime ? new Date(Number(sourceTime) || sourceTime).toLocaleString('zh-CN', { hour12:false }) : '--'}<br>盘口源：${esc(detail.depth?.source || 'waiting')}<br>K线源：${esc(detail.candles?.at(-1)?.source || 'waiting')}<br>订阅：${esc((detail.gateway.subscriptions || []).join('、'))}`;
+    }
+
+    function renderRisk() {
+      const risk = state.workstation.riskCenter;
+      $('#risk-state').textContent = risk.state === 'normal' ? '风险正常' : '限制交易';
+      $('#risk-state').className = `status ${risk.state === 'normal' ? 'ok' : 'warn'}`;
+      $('#risk-metrics').innerHTML = [
+        ['账户权益', `$${fmt(risk.equity, 2)}`, `可用 $${fmt(risk.available, 2)}`],
+        ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, '含未实现盈亏'],
+        ['回撤', `${fmt(risk.drawdownPct, 2)}%`, '15% 限制新开仓'],
+        ['持仓/敞口', `${risk.openPositions} / ${fmt(risk.grossExposure * 100, 2)}%`, '单策略上限 40%'],
+      ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');
+      $('#risk-breakers').innerHTML = risk.breakers.map(b => {
+        const ratio = b.limit ? Math.min(100, Math.abs(Number(b.current || 0) / Number(b.limit || 1) * 100)) : (b.status === 'normal' ? 100 : 0);
+        return `<div class="breaker"><div class="breaker-head"><strong>${esc(b.name)}</strong><span class="status ${b.status === 'normal' ? 'ok' : b.status === 'halted' ? 'bad' : 'warn'}">${esc(b.status)}</span></div><div class="muted" style="margin-top:5px">${esc(b.action)}</div><div class="bar"><span style="width:${ratio}%;background:${b.status === 'normal' ? 'var(--green)' : 'var(--red)'}"></span></div></div>`;
+      }).join('');
+    }
+
+    function renderReview(reviewInput = null) {
+      const review = reviewInput || state.workstation.review || { summary: {}, tradeFields: [], dailyFields: [], attribution: [], trades: [], nextActions: [] };
+      const reviewDate = review.date ? ` · ${review.date}` : '';
+      $('#review-state').textContent = review.reconciled ? '账单已对平' : review.state === 'waiting_fills' ? '等待成交事实' : review.state === 'waiting_pairing' ? '未对平估算' : '已配对 · 待对账';
+      $('#review-state').className = `status ${review.reconciled ? 'ok' : review.state === 'estimated_unreconciled' ? 'ok' : 'warn'}`;
+      $('#review-summary').innerHTML = `<div class="metric-grid"><div class="metric"><span>${review.reconciled ? '净盈亏' : '估算净盈亏'}</span><strong class="num">${review.reconciled ? '$' + signed(review.summary.netPnl, 2) : review.summary.estimatedNetPnl === null ? '--' : '~$' + signed(review.summary.estimatedNetPnl, 2)}</strong><small>${esc(review.reconciliation)}</small></div><div class="metric"><span>成交 / 配对交易</span><strong>${review.summary.fillCount} / ${review.summary.pairedTradeCount || 0}</strong><small>OKX fills / FIFO · ${reviewDate.replace(' · ', '')}</small></div><div class="metric"><span>已知手续费</span><strong class="num">$${fmt(review.summary.totalFees, 2)}</strong><small>资金费未对平</small></div><div class="metric"><span>估算期望</span><strong>${review.summary.expectancy === null ? '--' : fmt(review.summary.expectancy, 2)}</strong><small>仅完整开平配对</small></div></div><div class="danger-note" style="margin-top:10px">账单和资金费未逐笔对平前，系统不会把估算值标成正式净盈亏。</div><div class="report-section" style="margin-top:10px"><h3>单笔报告字段</h3><ul>${review.tradeFields.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div><div class="report-section"><h3>单日报告字段</h3><ul>${review.dailyFields.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+      const trades = review.trades || [];
+      $('#review-detail').innerHTML = `<div class="report-section"><h3>FIFO 单笔配对</h3><div class="trade-list">${trades.length ? trades.slice(0, 20).map(x => `<div class="trade-card"><div class="trade-card-head"><strong>${esc(x.instId)} · ${x.side === 'long' ? '多' : '空'} ${fmt(x.size, 4)}张</strong><span class="${x.pnl >= 0 ? 'green' : 'red'} num">${signed(x.pnl, 2)} USDT</span></div><div class="muted num" style="margin-top:5px">${fmt(x.entryPrice, 4)} → ${fmt(x.exitPrice, 4)} · 手续费 ${fmt(x.fee, 4)} · 持仓 ${fmt((x.holdingMs || 0) / 3600000, 1)}小时</div><div class="faint" style="margin-top:4px">${esc(x.strategyDeviation || '')}</div></div>`).join('') : '<div class="empty">等待真实成交形成完整开平配对</div>'}</div></div><div class="report-section"><h3>归因</h3>${review.attribution.length ? review.attribution.map(x => `<div class="list-row"><div><strong>${esc(x.dimension)} · ${esc(x.key)}</strong><div class="muted">${esc(x.insight)}</div></div><span class="${x.pnl >= 0 ? 'green' : 'red'} num">${signed(x.pnl, 2)}</span></div>`).join('') : '<div class="empty">等待真实闭合交易后生成归因</div>'}</div><div class="report-section"><h3>下一步</h3><ul>${review.nextActions.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+    }
+
+    function fillOrderFromPlan(item) {
+      const plan = item.plan || {};
+      $('#order-inst').value = item.instId;
+      $('#order-side').value = plan.direction === 'short' ? 'sell' : 'buy';
+      $('#order-price').value = plan.entryZone ? plan.entryZone[0] : item.price || '';
+      $('#order-stop').value = plan.stop || '';
+      $('#order-target').value = plan.target1 || '';
+      $('#order-reduce-only').checked = false;
+      $('#order-key').value = `plan-${item.underlying}-${Date.now()}`;
+      state.lastPrecheck = null;
+      toast('已把计划同步到预检表单');
+    }
+
+    const orderPayload = () => ({
+      accountId: $('#order-account').value,
+      instId: $('#order-inst').value,
+      side: $('#order-side').value,
+      orderType: $('#order-type').value,
+      size: Number($('#order-size').value),
+      price: Number($('#order-price').value),
+      stopLossPrice: Number($('#order-stop').value),
+      takeProfitPrice: Number($('#order-target').value),
+      reduceOnly: $('#order-reduce-only').checked,
+      idempotencyKey: $('#order-key').value.trim(),
+      holdingDays: 5,
+      leverage: 1,
+    });
+    const orderFingerprint = (payload) => JSON.stringify([payload.accountId, payload.instId, payload.side, payload.orderType, payload.size, payload.price, payload.stopLossPrice, payload.takeProfitPrice, payload.reduceOnly, payload.idempotencyKey, payload.holdingDays, payload.leverage]);
+    const invalidatePrecheck = () => {
+      if (!state.lastPrecheck) return;
+      state.lastPrecheck = null;
+      $('#order-submit').disabled = true;
+      $('#risk-check').className = 'decision-box warn';
+      $('#risk-check').textContent = '订单参数已变化，请重新运行预检';
+    };
+
+    async function loadAccounts() {
+      const p = await api('/api/v3/accounts');
+      state.accounts = p.accounts || [];
+      $('#accounts-list').innerHTML = state.accounts.length ? state.accounts.map(a => `<div class="list-row"><div><strong>${esc(a.name)}</strong><div class="muted">${esc(a.exchange)} · ${a.environment === 'live' ? '实盘' : '模拟'} · ${esc(a.credentialMasked || '')}</div><div class="faint">${esc(a.connectionMessage || a.lastSyncAt || '')}</div></div><div class="actions"><span class="status ${a.status === 'connected' ? 'ok' : a.status === 'degraded' ? 'bad' : 'warn'}">${esc(a.status)}</span>${a.canConnect ? `<button class="btn" data-connect="${esc(a.id)}">验证连接</button>` : ''}</div></div>`).join('') : '<div class="empty"><strong>还没有绑定 OKX 账户</strong>先绑定模拟或实盘读取账户。</div>';
+      $('#order-account').innerHTML = state.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)} · ${a.environment === 'live' ? '实盘' : '模拟'}</option>`).join('');
+      $$('[data-connect]').forEach(button => button.onclick = async () => { const r = await api(`/api/v3/accounts/${button.dataset.connect}/connect`, { method:'POST', body:'{}' }); toast(r.message); await loadAccounts(); });
+    }
+
+    function renderPrivate(p) {
+      $('#private-source').textContent = p.source === 'okx-private-ws' ? 'OKX 私有 WS 已连接' : '等待 OKX 私有连接';
+      $('#private-source').className = `status ${p.source === 'okx-private-ws' ? 'ok' : 'warn'}`;
+      const table = (rows, cols, empty) => rows.length ? `<table class="table"><thead><tr>${cols.map(c => `<th>${c[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${c[0](row)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : `<div class="empty">${empty}</div>`;
+      $('#exchange-orders').innerHTML = table(p.exchangeOrders || [], [
+        [o => `${esc(o.exchangeOrderId)}<div class="faint">${esc(o.clientOrderId || '')}</div>`, '订单号'],
+        [o => esc(o.instId), '合约'],
+        [o => `<span class="${o.side === 'buy' ? 'green' : 'red'}">${o.side === 'buy' ? '买' : '卖'} · ${esc(o.orderType)}</span>`, '方向/类型'],
+        [o => `<span class="status ${o.state === 'filled' ? 'ok' : o.state === 'canceled' ? 'bad' : 'warn'}">${esc(o.state)}</span>`, '状态'],
+        [o => `${fmt(o.filledSize, 2)} / ${fmt(o.size, 2)}`, '成交/委托'],
+        [o => o.sourceTs ? new Date(Number(o.sourceTs) || o.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间'],
+      ], '没有交易所订单');
+      $('#positions').innerHTML = table(p.positions || [], [
+        [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'long' ? 'green' : 'red'}">${esc(x.side)}</span>`, '方向'], [x => fmt(Math.abs(x.quantity), 2), '数量'], [x => fmt(x.avgEntryPrice, 4), '开仓均价'], [x => fmt(x.markPrice, 4), '标记价'], [x => `<span class="${x.unrealizedPnl >= 0 ? 'green' : 'red'}">${signed(x.unrealizedPnl, 2)}</span>`, '未实现盈亏']
+      ], '当前没有持仓');
+      $('#fills').innerHTML = table(p.fills || [], [
+        [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${x.side === 'buy' ? '买' : '卖'}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
+      ], '暂无成交回报');
+    }
+
+    async function loadLive() {
+      if (!$('#order-account').options.length) await loadAccounts();
+      if (!$('#order-inst').options.length) $('#order-inst').innerHTML = state.instruments.map(i => `<option value="${esc(i.instId)}">${esc(i.underlying)} · ${esc(i.instId)}</option>`).join('');
+      if (state.selectedInst && [...$('#order-inst').options].some(option => option.value === state.selectedInst)) $('#order-inst').value = state.selectedInst;
+      const p = await api('/api/v3/orders');
+      renderPrivate(p);
+      state.privateStream?.close();
+      const source = new EventSource('/api/v3/private/stream');
+      source.onmessage = event => { try { renderPrivate(JSON.parse(event.data)); } catch {} };
+      source.onerror = () => { $('#private-source').textContent = '私有数据流重连中'; $('#private-source').className = 'status warn'; };
+      state.privateStream = source;
+    }
+
+    function renderResearch(detail = {}, events = []) {
+      const job = detail.job;
+      const candidate = detail.candidate;
+      if (!job) { $('#research-stage').textContent = '尚未运行'; return; }
+      state.researchJob = job;
+      $('#research-stage').textContent = `${job.currentStage || job.status} · ${job.progress || 0}%`;
+      const spec = candidate?.spec;
+      $('#research-output').innerHTML = `<div><strong>${esc(job.status === 'completed' ? '研究任务完成' : job.status === 'failed' ? '研究失败' : 'AI 正在研究')}</strong><div class="progress" aria-label="研究进度 ${job.progress || 0}%"><span style="transform:scaleX(${Math.max(0, Math.min(100, job.progress || 0)) / 100})"></span></div><div class="muted">${esc(job.currentStage || '--')} · ${esc(job.provider || '--')}${job.failureReason ? ` · ${esc(job.failureReason)}` : ''}</div></div>${events.length ? `<div class="report-section" style="margin-top:10px"><h3>八阶段证据</h3>${events.slice(-8).map(event => `<div class="list-row"><span>${esc(event.message)}</span><small>${new Date(event.createdAt).toLocaleTimeString('zh-CN', { hour12:false })}</small></div>`).join('')}</div>` : ''}${spec ? `<div class="report-section"><h3>${esc(spec.name)}</h3><div class="muted">${esc(spec.hypothesis)}</div><h3 style="margin-top:10px">入场规则</h3><ul>${(spec.entryRules || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul><h3 style="margin-top:10px">退出与风控</h3><ul>${[...(spec.exitRules || []), ...(spec.filters || [])].map(x => `<li>${esc(x)}</li>`).join('')}</ul><h3 style="margin-top:10px">限制</h3><ul>${(spec.limitations || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="danger-note" style="margin-top:10px">状态：${esc(candidate.status)}。没有回测、前向验证和压力测试证据时，系统禁止进入实盘。</div>${candidate.status === 'research_only' ? '<button class="btn" id="approve-paper" type="button" style="margin-top:10px">仅批准进入模拟</button>' : ''}</div>` : ''}`;
+      if ($('#approve-paper')) $('#approve-paper').onclick = async () => { const result = await api(`/api/v3/ai/research/${encodeURIComponent(job.id)}/approval`, { method:'POST', body: JSON.stringify({ decision:'paper' }) }); toast(result.message); await loadResearch(job.id); };
+    }
+
+    async function loadResearch(jobId = '') {
+      const listing = await api('/api/v3/ai/research');
+      const id = jobId || listing.jobs?.[0]?.id;
+      if (!id) { renderResearch(); return; }
+      const [detail, eventPayload] = await Promise.all([api(`/api/v3/ai/research/${encodeURIComponent(id)}`), api(`/api/v3/ai/research/${encodeURIComponent(id)}/events`)]);
+      renderResearch(detail, eventPayload.events || []);
+      clearTimeout(state.researchTimer);
+      if (['queued', 'running'].includes(detail.job.status)) state.researchTimer = setTimeout(() => loadResearch(id).catch(() => undefined), 800);
+    }
+
+    async function loadReview(date = '') {
+      try {
+        const review = await api(`/api/v3/reviews/daily${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+        state.reviewCache = review;
+        $('#review-date').value = review.date || '';
+        renderReview(review);
+      } catch (error) {
+        toast('复盘加载失败：' + error.message);
+      }
+    }
+
+    async function loadStrategies() {
+      const result = await api('/api/v3/strategies');
+      const strategies = result.strategies || [];
+      const enabled = strategies.filter(item => item.enabled).length;
+      $('#strategy-count').textContent = `${strategies.length} 个策略 · ${enabled} 启用`;
+      $('#strategy-count').className = `chip ${enabled ? '' : 'warn'}`;
+      $('#strategy-list').innerHTML = strategies.map(item => `
+        <div class="trade-card">
+          <div class="trade-card-head"><div><strong>${esc(item.name)}</strong><span class="chip" style="margin-left:8px">${esc(item.style)}</span></div>
+          <button class="btn ${item.enabled ? 'danger' : 'primary'}" data-strategy-key="${esc(item.key)}" data-toggle="${item.enabled ? 'off' : 'on'}" type="button">${item.enabled ? '停用' : '启用'}</button></div>
+          <div class="muted" style="margin:6px 0">${esc(item.primaryTimeframe)} 主周期 · ${esc(item.confirmationTimeframe)} 确认 · ${esc(item.assetClass)}</div>
+          <div class="muted" style="font-size:12px">${esc(item.hypothesis)}</div>
+          <div class="trigger-line"><span class="muted">入场：${esc(item.entryRule)}</span></div>
+          <div class="trigger-line"><span class="muted">退出：${esc(item.exitRule)}</span></div>
+        </div>`).join('') || '<div class="empty">暂无策略</div>';
+    }
+
+    async function refreshWorkstation() {
+      const [workstation, instrumentPayload, marketPayload, runtime, accountPayload] = await Promise.all([
+        api('/api/v3/workstation'),
+        api('/api/v3/markets/instruments?assetClass=equity'),
+        api('/api/v3/markets/snapshot'),
+        api('/api/v3/health'),
+        api('/api/v3/accounts'),
+      ]);
+      state.workstation = workstation;
+      state.runtime = runtime;
+      state.instruments = (instrumentPayload.instruments || []).filter((instrument) => instrument.assetClass === 'equity' && String(instrument.instId).endsWith('-USDT-SWAP'));
+      state.marketItems = marketPayload.items || [];
+      state.accounts = accountPayload.accounts || [];
+      const nextSelected = state.selectedInst || state.workstation.selected?.instId || state.instruments[0]?.instId || '';
+      state.selectedInst = nextSelected;
+      renderHealth();
+      renderRuntimeMode();
+      renderMarketState();
+      renderRisk();
+      renderReview();
+      renderInstruments();
+      renderOpportunities();
+      renderDecision();
+      loadStrategies().catch(error => toast(error.message));
+      loadResearch().catch(error => { $('#research-output').innerHTML = `<div class="empty">研究服务不可用：${esc(error.message)}</div>`; });
+      if (state.selectedInst) loadMarketDetail().catch(err => toast(err.message));
+    }
+
+    $('#login-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = $('#login-submit');
+      button.disabled = true;
+      button.textContent = '登录中';
+      try {
+        const result = await api('/api/v3/auth/login', { method:'POST', body: JSON.stringify({ username: $('#login-username').value, password: $('#login-password').value }) });
+        enterApp(result.user);
+        await refreshWorkstation();
+        navigate(location.hash.slice(1) || 'opportunities');
+      } catch (error) { $('#login-error').textContent = error.message; }
+      finally { button.disabled = false; button.textContent = '登录'; }
+    });
+    $('#logout').onclick = async () => { try { await api('/api/v3/auth/logout', { method:'POST' }); } finally { showLogin(); } };
+    $$('.nav-btn').forEach(button => button.onclick = () => navigate(button.dataset.view));
+    $('#refresh-workstation').onclick = () => refreshWorkstation().then(() => toast('工作台已刷新')).catch(err => toast(err.message));
+    $('#review-date').onchange = (event) => { const value = event.target.value; state.reviewDate = value; loadReview(value).catch(err => toast(err.message)); };
+    $('#review-today').onclick = () => { state.reviewDate = ''; loadReview('').catch(err => toast(err.message)); };
+    $('#review-prev').onclick = () => {
+      const current = state.reviewCache?.date || state.reviewDate || new Date().toISOString().slice(0, 10);
+      const prev = new Date(new Date(current + 'T00:00:00Z').getTime() - 86400000).toISOString().slice(0, 10);
+      state.reviewDate = prev;
+      loadReview(prev).catch(err => toast(err.message));
+    };
+    $('#review-next').onclick = () => {
+      const current = state.reviewCache?.date || state.reviewDate || new Date().toISOString().slice(0, 10);
+      const next = new Date(new Date(current + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+      state.reviewDate = next;
+      loadReview(next).catch(err => toast(err.message));
+    };
+    $('#asset-filter').onchange = renderInstruments;
+    $('#instrument-search').oninput = renderInstruments;
+    $$('#timeframes button').forEach(button => button.onclick = () => { state.selectedBar = button.dataset.bar; $$('#timeframes button').forEach(x => x.classList.toggle('active', x === button)); refreshChartData(); });
+    $('#indicator-select').onchange = event => { ensureChart(); state.chart?.createIndicator(event.target.value, event.target.value === 'MA' || event.target.value === 'EMA' || event.target.value === 'BOLL'); };
+    $('#refresh-live').onclick = () => loadLive().catch(err => toast(err.message));
+    $('#strategy-list').addEventListener('click', async event => {
+      const button = event.target.closest('button[data-strategy-key][data-toggle]');
+      if (!button) return;
+      const key = button.dataset.strategyKey;
+      const next = button.dataset.toggle === 'on';
+      button.disabled = true;
+      try {
+        const result = await api(`/api/v3/strategies/${encodeURIComponent(key)}/toggle`, { method:'POST', body: JSON.stringify({ enabled: next }) });
+        toast(result.message || (next ? '策略已启用' : '策略已停用'));
+        await loadStrategies();
+        await refreshWorkstation();
+      } catch (error) { toast(error.message); }
+      finally { button.disabled = false; }
+    });
+    $('#precheck').onclick = async () => {
+      try {
+        const payload = orderPayload();
+        const p = await api('/api/v3/risk/check', { method:'POST', body: JSON.stringify(payload) });
+        state.lastPrecheck = p.passed ? { fingerprint: orderFingerprint(payload), evaluatedAt: Date.now(), result: p } : null;
+        $('#order-submit').disabled = !p.passed;
+        $('#risk-check').className = `decision-box ${p.passed ? 'final' : 'warn'}`;
+        const e = p.estimates || {};
+        $('#risk-check').innerHTML = `<h3>${p.passed ? '预检通过' : '预检拒绝'}</h3><div class="confirm-facts"><div class="confirm-fact"><span>名义金额</span><strong class="num">${fmt(e.notional, 2)} USDT</strong></div><div class="confirm-fact"><span>合约乘数</span><strong class="num">${fmt(e.contractSize, 4)}</strong></div><div class="confirm-fact"><span>预计滑点</span><strong class="num">${fmt(e.estimatedSlippage, 2)} USDT</strong></div><div class="confirm-fact"><span>手续费</span><strong class="num">${fmt(e.estimatedFee, 2)} USDT</strong></div><div class="confirm-fact"><span>五日资金费</span><strong class="num">${fmt(e.estimatedFunding, 2)} USDT</strong></div><div class="confirm-fact"><span>保证金</span><strong class="num">${fmt(e.estimatedMargin, 2)} USDT</strong></div></div>${p.checks.map(x => `<div class="list-row"><span>${x.passed ? '通过' : '拒绝'} · ${esc(x.label)}</span><span>${esc(x.detail)}</span></div>`).join('')}`;
+      } catch (error) { $('#order-submit').disabled = true; toast(error.message); }
+    };
+    $('#order-form').onsubmit = async event => {
+      event.preventDefault();
+      const payload = orderPayload();
+      if (!state.lastPrecheck || state.lastPrecheck.fingerprint !== orderFingerprint(payload) || Date.now() - state.lastPrecheck.evaluatedAt > 60_000) {
+        toast('请先对当前订单参数运行并通过风控预检');
+        return;
+      }
+      state.pendingOrder = payload;
+      const e = state.lastPrecheck.result.estimates || {};
+      $('#confirm-facts').innerHTML = [['账户', $('#order-account').selectedOptions[0]?.textContent || '--'], ['合约', payload.instId], ['方向/类型', `${payload.side === 'buy' ? '买入/做多' : '卖出/做空'} · ${payload.orderType === 'market' ? '市价' : '限价'}${payload.reduceOnly ? ' · 只减仓' : ''}`], ['数量/预检价', `${fmt(payload.size, 4)} / ${fmt(e.price, 4)}`], ['止损/止盈', `${payload.stopLossPrice ? fmt(payload.stopLossPrice, 4) : '--'} / ${payload.takeProfitPrice ? fmt(payload.takeProfitPrice, 4) : '--'}`], ['名义金额', `${fmt(e.notional, 2)} USDT`], ['成本估算', `${fmt((e.estimatedSlippage || 0) + (e.estimatedFee || 0) + (e.estimatedFunding || 0), 2)} USDT`]].map(x => `<div class="confirm-fact"><span>${esc(x[0])}</span><strong>${esc(x[1])}</strong></div>`).join('');
+      $('#order-confirm-dialog').showModal();
+    };
+    $('#cancel-order-intent').onclick = () => { state.pendingOrder = null; $('#order-confirm-dialog').close(); };
+    $('#confirm-order-intent').onclick = async () => {
+      if (!state.pendingOrder) return;
+      const button = $('#confirm-order-intent');
+      button.disabled = true;
+      try {
+        const p = await api('/api/v3/orders/intents', { method:'POST', body: JSON.stringify(state.pendingOrder) });
+        toast(p.order.duplicate ? '检测到重复幂等键，未创建新订单' : `订单意图已写入：${p.order.status}`);
+        $('#order-confirm-dialog').close();
+        state.pendingOrder = null;
+        await loadLive();
+      } catch (error) { toast(error.message); }
+      finally { button.disabled = false; }
+    };
+    $('#order-form').addEventListener('input', invalidatePrecheck);
+    $('#order-form').addEventListener('change', invalidatePrecheck);
+    $('#account-env').onchange = () => { $('#live-credentials').hidden = $('#account-env').value !== 'live'; };
+    $('#account-form').onsubmit = async event => {
+      event.preventDefault();
+      try {
+        const p = await api('/api/v3/accounts', { method:'POST', body: JSON.stringify({ name: $('#account-name').value, environment: $('#account-env').value, apiKey: $('#account-api-key').value, secretKey: $('#account-secret-key').value, passphrase: $('#account-passphrase').value }) });
+        toast(`账户 ${p.account.name} 已保存`);
+        event.target.reset(); $('#live-credentials').hidden = true; await loadAccounts();
+      } catch (error) { toast(error.message); }
+    };
+    $('#refresh-accounts').onclick = () => loadAccounts().catch(err => toast(err.message));
+    window.addEventListener('hashchange', () => navigate(location.hash.slice(1) || 'opportunities'));
+    window.addEventListener('resize', () => state.chart?.resize());
+
+    (async () => {
+      try {
+        const session = await api('/api/v3/auth/session');
+        enterApp(session.user);
+        await refreshWorkstation();
+        navigate(location.hash.slice(1) || 'opportunities');
+      } catch (error) {
+        showLogin(error.status === 401 ? '' : `服务连接失败：${error.message}`);
+      }
+    })();
+  })();
+  </script>
+</body>
+</html>
