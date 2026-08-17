@@ -60,7 +60,6 @@ const positionManager = new PositionManager({
   getGateway: (accountId) => accountGateways.get(accountId),
   getAlgos: (gateway) => gateway.listPendingAlgos('SWAP'),
   setProtection: (gateway, params) => gateway.setPositionProtection(params),
-  setTrailing: (gateway, params) => gateway.setTrailingStop(params),
   cancelAlgo: (gateway, params) => gateway.cancelAlgo(params),
   // 减仓执行：市价只减仓单（通过 REST order 通道，reduceOnly）
   reducePosition: async (gateway, { instId, side, qty }) => {
@@ -890,32 +889,6 @@ const server = createServer(async (req, res) => {
     }
 
     // 为已有持仓挂 OKX 原生移动止损（只减仓）
-    if (url.pathname === '/api/v3/positions/trailing-stop' && req.method === 'POST') {
-      const principal = requirePrincipal(req, res); if (!principal) return;
-      const input = await readJson(req);
-      const { instId, callbackRatio = 0.01, activePx = null } = input;
-      if (!instId) { json(res, 400, { error: '缺少 instId' }); return; }
-      const accounts = await domain.listAccounts(principal);
-      const account = accounts.find((a) => a.environment === 'live');
-      if (!account) { json(res, 400, { error: '未找到实盘账户' }); return; }
-      const gateway = accountGateways.get(account.id);
-      if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有连接未就绪' }); return; }
-      const positions = [...domain.positions.values()].filter((p) => p.accountId === account.id && p.instId === instId && Number(p.quantity) !== 0);
-      const position = positions[0];
-      if (!position) { json(res, 400, { error: '该标的无持仓' }); return; }
-      const result = await gateway.setTrailingStop({
-        instId,
-        side: position.side === 'long' ? 'sell' : 'buy',
-        size: Math.abs(Number(position.quantity)),
-        callbackRatio: Number(callbackRatio),
-        activePx: activePx ? Number(activePx) : null,
-        posSide: position.posSide || 'net',
-      });
-      domain.recordAudit(principal, 'position.trailing_stop', { instId, callbackRatio, activePx, size: Math.abs(Number(position.quantity)), reason: '用户要求立即启用动态止损', result });
-      json(res, 200, { ok: true, reason: '方向明确但50倍杠杆，保留1730硬止损并用1%回撤动态锁定后续浮盈', result });
-      return;
-    }
-
     // 为已有持仓挂止损/止盈（保护性操作，不改变仓位）
     if (url.pathname === '/api/v3/positions/protection' && req.method === 'POST') {
       const principal = requirePrincipal(req, res); if (!principal) return;

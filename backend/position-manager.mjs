@@ -6,12 +6,11 @@
 //   4. 仓位调整：风险超上限自动减仓（数学理由），加仓需明确确认
 // 每次操作写审计日志 + 通过 onNotify 推送理由
 export class PositionManager {
-  constructor({ domain, getGateway, getAlgos, setProtection, setTrailing, cancelAlgo, reducePosition, placeOrder, conviction, getAtrPct = async () => 0.003, getOpportunities = async () => [], getLotSz = async () => 0.01, getSignal = async () => null, getH4Momentum = async () => null, clock = () => new Date(), onNotify = () => {} } = {}) {
+  constructor({ domain, getGateway, getAlgos, setProtection, cancelAlgo, reducePosition, placeOrder, conviction, getAtrPct = async () => 0.003, getOpportunities = async () => [], getLotSz = async () => 0.01, getSignal = async () => null, getH4Momentum = async () => null, clock = () => new Date(), onNotify = () => {} } = {}) {
     this.domain = domain;
     this.getGateway = getGateway;
     this.getAlgos = getAlgos;
     this.setProtection = setProtection;
-    this.setTrailing = setTrailing;
     this.cancelAlgo = cancelAlgo;
     this.reducePosition = reducePosition || (async () => { throw new Error('未配置减仓执行通道'); });
     this.placeOrder = placeOrder || (async () => { throw new Error('未配置开仓执行通道'); });
@@ -25,12 +24,10 @@ export class PositionManager {
     this.onNotify = onNotify;
     this.lastRun = 0;
     this.minIntervalMs = 15_000; // 同一持仓 15s 内不重复评估
-    this.peakPrices = new Map();      // instId → {high, at} 持仓期间最高价
-    this.sysTrailingIds = new Set();  // 系统自管动态止损的 algoId 集合
+    this.peakPrices = new Map();      // instId → {high, at} 持仓期间最高价（动态止损已弃用，保留结构）
     this.cooldowns = new Map();       // instId → 平仓时间戳（30分钟冷却）
     this.autoOpenEnabled = false;     // 自动开单默认关闭（安全开关）
-    this.lastTrailingMove = new Map(); // instId → 上次动态止损移动时间（10分钟冷却）
-    this.pendingSlInsts = new Set();   // 本进程已挂硬止损的标的（防重复挂单）
+    this.pendingSlInsts = new Set();  // 本进程已挂硬止损的标的（防重复挂单）
   }
 
   // 自动开单：默认禁用！只有显式开启(AUTO_TRADE_ENABLED)才允许
@@ -165,9 +162,9 @@ export class PositionManager {
         const entry = Number(pos.avgEntryPrice);
         const mark = Number(pos.markPrice);
         const liq = Number(pos.liquidationPrice);
+        // 止损完全由用户手动设置（规则1/2/3 自动止损全禁用，2026-08-17）
         const positionAlgos = algos.filter((a) => a.instId === instId && a.state === 'live');
         const hardSl = positionAlgos.find((a) => (a.ordType === 'conditional' || a.ordType === 'oco') && Number(a.slTriggerPx));
-        const trailing = positionAlgos.find((a) => a.ordType === 'move_order_stop' || Number(a.callbackRatio) > 0);
         const conv = this.conviction(instId);
         const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
         // —— 持仓持续评估：信号是否仍生效（开仓后不能不管）——
