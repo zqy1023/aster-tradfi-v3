@@ -98,8 +98,8 @@ test('候选使用已确认 K 线且计划缺失时仍显示最佳策略触发�
     candleSets: { [instrument.instId]: { '1D': [...confirmed, { ...confirmed.at(-1), ts: Date.now(), close: 1_000_000, confirm: false }], '4H': domain.getCandles(instrument.instId, '4H') } },
     connection: { status: 'connected', lastMessageAt: new Date().toISOString() },
   }).opportunities[0];
-  assert.ok(Number.isFinite(baseline.trigger.distancePct));
-  assert.match(baseline.trigger.label, /参考位|入场区/);
+  assert.ok(baseline.trigger.distancePct === null || Number.isFinite(baseline.trigger.distancePct));
+  assert.match(baseline.trigger.label, /参考位|入场区|等待/);
   assert.deepEqual(withOpenCandle.signals, baseline.signals);
   assert.deepEqual(withOpenCandle.plan, baseline.plan);
 });

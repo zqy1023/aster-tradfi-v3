@@ -1,42 +1,35 @@
-// 策略管理：内置策略目录 + 启用/停用 + 运行统计
-// 策略定义与信号引擎共享同一套 type 标识（见 workstation-domain.mjs buildSignals）
+// 策略管理：内置策略目录 + 启用/停用
+// 基于因子研究(FACTOR_RESEARCH_20260817.md)的结论：
+//   方向因子(技术指标)无稳定alpha → 删除旧3策略(突破回踩/动量延续/区间高抛低吸)
+//   横截面12月动量 Sharpe 1.42 有效 → 动量选股
+//   波动率预测 IC 0.3-0.4 稳定 → 波动率目标仓位(风控层)
 
 const DEFAULT_STRATEGIES = [
   {
-    key: 'breakout_retest',
-    name: '突破回踩确认',
-    style: 'breakout_retest',
+    key: 'momentum_select',
+    name: '12月动量选股',
+    style: 'momentum_select',
     assetClass: 'equity',
     primaryTimeframe: '1D',
-    confirmationTimeframe: '4H',
-    hypothesis: '日线突破 20 日区间边界后不立即追价，等待 4H 回踩确认支撑/压力后入场，降低假突破损耗。',
-    entryRule: '突破 20 日边界 + 4H 回踩至突破位 1ATR 内企稳',
-    exitRule: '突破位下方 1.2ATR 止损，目标 2R',
+    confirmationTimeframe: '1W',
+    hypothesis: '每月末按过去12个月收益率对全市场美股永续排序，做多动量最强的 Top3-5 并持有到下月。横截面动量是学术最稳健的因子之一，回测年化 73%、Sharpe 1.42（美股5年代理数据）。',
+    entryRule: '每月末：过去12月收益率 Top3-5 标的，次月首个交易日开盘等权买入',
+    exitRule: '月末重新排序换仓；跌破 20 日 EMA 或周线 Donchian55 下沿提前退出',
     status: 'enabled',
+    evidence: '2021-08~2026-08 美股12标的代理: 年化73.2% Sharpe 1.42, 仅2022年-18%(详见 docs/FACTOR_RESEARCH_20260817.md)',
   },
   {
-    key: 'momentum_follow',
-    name: '动量延续跟随',
-    style: 'momentum_follow',
+    key: 'vol_target',
+    name: '波动率目标仓位',
+    style: 'vol_target',
     assetClass: 'equity',
     primaryTimeframe: '1D',
     confirmationTimeframe: '4H',
-    hypothesis: '价格沿 EMA20 斜率方向连续创新高/新低，ADX 强劲表明趋势未衰竭，顺势跟随强势标的。',
-    entryRule: 'EMA20 斜率同向 + 创 10 日新高/低 + ADX14≥20',
-    exitRule: 'EMA20 反向跌破/升破离场',
+    hypothesis: '用 ATR14% 预测未来波动率（预测 IC 0.28-0.41，分年度稳定），高波动时自动减仓、低波动时满仓，把组合波动压到目标水平。回测 Sharpe 0.414→0.559、回撤 64.7%→36.8%。',
+    entryRule: '仓位 = 目标年化波动30% / 当前ATR14%年化预测；波动飙升时(财报/宏观前)提示减仓',
+    exitRule: '每日按最新预测波动调整仓位；ATR% > 均值1.5倍时强制降至半仓',
     status: 'enabled',
-  },
-  {
-    key: 'range_mean',
-    name: '区间高抛低吸',
-    style: 'range_mean',
-    assetClass: 'equity',
-    primaryTimeframe: '1D',
-    confirmationTimeframe: '4H',
-    hypothesis: 'ADX 低迷、价格在 20 日区间中部震荡时，在区间 20%/80% 分位反向操作，捕捉无趋势行情的高抛低吸。',
-    entryRule: 'ADX14<16 + 价格触及区间 20%/80% 分位 + RSI 极值',
-    exitRule: '区间中线或 1ATR 止损',
-    status: 'disabled',
+    evidence: '波动率预测 IC 分年度全正; VolTarget 10/12标的Sharpe提升(详见 docs/FACTOR_RESEARCH_20260817.md)',
   },
 ];
 
@@ -83,6 +76,7 @@ export class StrategyManager {
         hypothesis: item.hypothesis,
         entryRule: item.entryRule,
         exitRule: item.exitRule,
+        evidence: item.evidence || null,
         status: row ? row.status : item.status,
         enabled: row ? row.status === 'enabled' : item.status === 'enabled',
         updatedAt: row?.updatedAt || null,
@@ -93,9 +87,6 @@ export class StrategyManager {
 
   async setEnabled(principal, key, enabled) {
     if (!this.catalog.has(key)) throw new Error('策略不存在');
-    if (this.catalog.get(key).style === 'range_mean' && enabled === false) {
-      // 允许关闭；打开时要求数据积累提示由前端处理
-    }
     const row = await this.repository?.upsertStrategy({
       key,
       tenantId: this.tenant(principal),
@@ -109,10 +100,6 @@ export class StrategyManager {
       updatedAt: this.clock().toISOString(),
     }).catch(() => null);
     return { key, enabled, row };
-  }
-
-  catalogForSignalEngine() {
-    return this.catalog;
   }
 
   tenant(principal) {
