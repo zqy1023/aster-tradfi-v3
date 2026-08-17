@@ -179,7 +179,12 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
         evidence: ['历史 K 线不足，不能生成可执行策略证据'],
         blockers: ['等待 OKX 历史 K 线补齐到至少 20 根'],
       }),
-    ];
+    ].filter((signal) => {
+      // 与主信号数组一致：只保留启用策略
+      const enabled = context.enabledStrategies;
+      if (!enabled || !enabled.length) return true;
+      return enabled.includes(signal.type);
+    });
   }
   const atrValue = daily.atr14 || Math.max(price * 0.025, Number(instrument.tickSize || 0.01) * 20);
   const liquidityOk = finite(snapshot?.volume24h, 0) > 0;
