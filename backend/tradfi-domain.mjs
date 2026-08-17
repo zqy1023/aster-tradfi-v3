@@ -362,6 +362,16 @@ export class TradFiDomain {
       if (this.repository) this.repository.saveAccountSnapshot(snapshot).catch(() => undefined);
     }
     if (channel === 'positions') {
+      // reconcile(REST) 返回空 = OKX 确认无持仓 → 清空该账户所有内存持仓（修残留bug）
+      // WS 净仓模式平仓后可能不再推 pos=0 事件，旧值会残留
+      if (!rows.length && source === 'okx-rest-reconcile') {
+        for (const key of [...this.positions.keys()]) {
+          if (key.startsWith(`${accountId}|`)) this.positions.delete(key);
+        }
+        const flatSnapshot = { ...(this.riskSnapshots.get(accountId) || {}), accountId, tenantId: this.tenant(principal), source: 'okx-account-ws', openPositions: 0, updatedAt: recvTs };
+        this.riskSnapshots.set(accountId, flatSnapshot);
+        return;
+      }
       for (const row of rows) {
         const quantity = Number(row.pos || 0);
         const inferredSide = row.posSide === 'long' || row.posSide === 'short' ? row.posSide : quantity > 0 ? 'long' : quantity < 0 ? 'short' : 'flat';
