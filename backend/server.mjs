@@ -135,7 +135,12 @@ function scheduleMarketBroadcast(instId) {
 const privateFlushTimers = new Map();
 
 async function broadcastPrivate(principal) {
-  const payload = await domain.privateTradingData(principal);
+  // 订单/持仓/成交 + 风险中心（权益/可用/今日盈亏）一起推送，实盘页实时刷新
+  const [payload, risk] = await Promise.all([
+    domain.privateTradingData(principal),
+    domain.riskOverview(principal),
+  ]);
+  payload.risk = risk;
   for (const [res, client] of privateClients.entries()) {
     if (client.backpressured) continue;
     if (client.principal.tenantId === principal.tenantId && (client.principal.role === 'admin' || client.principal.userId === principal.userId) && !writeEvent(res, payload)) client.backpressured = true;
@@ -679,8 +684,8 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === '/api/v3/orders' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;
-      const data = await domain.privateTradingData(principal);
-      json(res, 200, { ...data, orders: data.intents }); return;
+      const [data, risk] = await Promise.all([domain.privateTradingData(principal), domain.riskOverview(principal)]);
+      json(res, 200, { ...data, orders: data.intents, risk }); return;
     }
     if (url.pathname === '/api/v3/private/stream' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;

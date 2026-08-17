@@ -21,6 +21,7 @@ export class OKXPrivateGateway {
     this.reconnects = 0;
     this.reconnectTimer = null;
     this.heartbeatTimer = null;
+    this.reconcileTimer = null;
     this.closed = false;
     this.accountConfig = null;
     this.lastMessageAt = null;
@@ -98,7 +99,7 @@ export class OKXPrivateGateway {
 
   subscribe() {
     if (this.status !== 'connected') return;
-    this.socket.send(JSON.stringify({ op: 'subscribe', args: [{ channel: 'account' }, { channel: 'positions', instType: 'ANY' }, { channel: 'orders', instType: 'ANY' }] }));
+    this.socket.send(JSON.stringify({ op: 'subscribe', args: [{ channel: 'account' }, { channel: 'positions', instType: 'ANY' }, { channel: 'orders', instType: 'ANY' }, { channel: 'fills', instType: 'ANY' }] }));
   }
 
   async privateGet(path) {
@@ -126,8 +127,13 @@ export class OKXPrivateGateway {
     emit('account', account);
     emit('positions', positions);
     emit('orders', pendingOrders);
+    // REST fills 带真实 fillPnl（WS fills 事件的 fillPnl 恒为 0），用于修正已实现盈亏
     emit('fills', [...swapFills, ...futureFills]);
     this.onState({ status: this.status, message: 'OKX 私有 WS 实时连接，订单与成交历史已对账', lastSyncAt: recvTs });
+    // 每 5 分钟重新对账一次，修正 WS 填充的 0 pnl（已实现盈亏实时性靠 WS，真值靠 REST 覆盖）
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
+    this.reconcileTimer = setTimeout(() => this.reconcile().catch(() => undefined), 5 * 60 * 1000);
+    return recvTs;
   }
 
   request(op, args, requestId) {

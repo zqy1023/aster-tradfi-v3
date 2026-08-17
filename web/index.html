@@ -532,13 +532,13 @@
       $('#market-times').innerHTML = `行情时间：${sourceTime ? new Date(Number(sourceTime) || sourceTime).toLocaleString('zh-CN', { hour12:false }) : '--'}<br>盘口源：${esc(detail.depth?.source || 'waiting')}<br>K线源：${esc(detail.candles?.at(-1)?.source || 'waiting')}<br>订阅：${esc((detail.gateway?.subscriptions || []).join('、'))}`;
     }
 
-    function renderRisk() {
-      const risk = state.workstation.riskCenter;
+    function renderRisk(riskOverride = null) {
+      const risk = riskOverride || state.workstation.riskCenter || {};
       $('#risk-state').textContent = risk.state === 'normal' ? '风险正常' : '限制交易';
       $('#risk-state').className = `status ${risk.state === 'normal' ? 'ok' : 'warn'}`;
       $('#risk-metrics').innerHTML = [
         ['账户权益', `$${fmt(risk.equity, 2)}`, `可用 $${fmt(risk.available, 2)}`],
-        ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, `已实现 $${fmt(risk.todayRealized ?? 0, 2)} · 未实现 $${fmt(risk.todayUnrealized ?? 0, 2)}`],
+        ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, `已实现 $${fmt(risk.todayRealized ?? 0, 2)} · 手续费 $${fmt(risk.todayFees ?? 0, 2)} · 未实现 $${fmt(risk.todayUnrealized ?? 0, 2)}`],
         ['回撤', `${fmt(risk.drawdownPct, 2)}%`, '15% 限制新开仓'],
         ['持仓/敞口', `${risk.openPositions} / ${fmt(risk.grossExposure * 100, 2)}%`, '单策略上限 40%'],
       ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');
@@ -608,6 +608,8 @@
     function renderPrivate(p) {
       $('#private-source').textContent = p.source === 'okx-private-ws' ? 'OKX 私有 WS 已连接' : '等待 OKX 私有连接';
       $('#private-source').className = `status ${p.source === 'okx-private-ws' ? 'ok' : 'warn'}`;
+      // SSE 实时推送含 risk（权益/可用/今日盈亏），直接刷新风险中心
+      if (p.risk) renderRisk(p.risk);
       const table = (rows, cols, empty) => rows.length ? `<table class="table"><thead><tr>${cols.map(c => `<th>${c[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${c[0](row)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : `<div class="empty">${empty}</div>`;
       $('#exchange-orders').innerHTML = table(p.exchangeOrders || [], [
         [o => `${esc(o.exchangeOrderId)}<div class="faint">${esc(o.clientOrderId || '')}</div>`, '订单号'],
