@@ -198,35 +198,15 @@ export class PositionManager {
         const targetRiskPct = 2 * (conv?.mult || 1);
         const distLiq = mark && liq ? Math.abs(mark - liq) / mark * 100 : null;
 
-        // —— 规则1：硬止损 —— 只读不干预：用户手动挂的(最新conditional)优先
-        // 系统只在"完全没有硬止损"时才补一个（用户规则：硬止损 < 实际仓位2%；SNDK用1%）
-        // 修复bug: setProtection 必须传 sz=持仓数量, 否则OKX默认sz:1只覆盖1张(实测1717.79 sz:1裸仓)
-        if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx)) && !this.pendingSlInsts.has(instId)) {
-          const slDistPct = instId === 'SNDK-USDT-SWAP' ? 0.99 : 0.98; // SNDK 1%距离, 其他2%
-          const slPx = side === 'long' ? mark * slDistPct : mark * (2 - slDistPct);
-          const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100, size: qty });
-          if (result?.[0]?.algoId) this.pendingSlInsts.add(instId); // 记录已挂，本轮不再重复
-          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（覆盖${qty}张, ${instId === 'SNDK-USDT-SWAP' ? '1%' : '2%'} 距离），如已在 App 挂过请忽略` });
-        }
+        // —— 规则1：硬止损 —— 已按用户要求关闭自动干预
+        // 用户: "给我设置全仓止损，不要设置自动止损"（2026-08-17）
+        // 系统不再自动挂/改止损，止损完全由用户手动设置，系统只读展示
+        // （原自动挂止损逻辑已禁用）
 
-        // —— 规则2：保护单去重 —— 保留"覆盖全量"的单（sz 最大或 closeFraction=1）
-        // 修复bug: 原来按cTime保留最新, 但sz:1的部分单cTime更新反而被保留,
-        //         导致覆盖全量的单被取消, 持仓变裸仓(实测: 1717.79 sz:1保留, 1706.89全量被删)
-        const hardSlAlgos = positionAlgos.filter((a) => (a.ordType === 'conditional' || a.ordType === 'oco') && Number(a.slTriggerPx));
-        if (hardSlAlgos.length > 1) {
-          // 覆盖数量: sz 数字大者覆盖全; 空sz或closeFraction=1视为全量
-          const coverage = (a) => {
-            const sz = Number(a.sz || 0);
-            if (sz > 0) return sz;
-            return a.closeFraction === '1' || a.closeFraction === 1 ? 999 : 1;
-          };
-          hardSlAlgos.sort((a, b) => coverage(b) - coverage(a));
-          const keep = hardSlAlgos[0];
-          for (const dup of hardSlAlgos.slice(1)) {
-            await this.cancelAlgo(gateway, { instId, algoId: dup.algoId });
-            actions.push({ action: '取消重复硬止损', instId, detail: `存在多个硬止损，取消 ${dup.algoId}（保留覆盖全量 ${keep.algoId} = ${keep.slTriggerPx} sz=${keep.sz || '全量'}）` });
-          }
-        }
+        // —— 规则2：保护单去重 —— 已按用户要求关闭自动干预
+        // 用户: "不要设置自动止损" — 系统不再自动取消/保留任何止损单
+        // 去重曾误删用户手动止损(1719被系统按公式挂的1707覆盖)，风险太大，整体禁用
+        // （原去重逻辑已禁用，止损由用户完全掌控）
 
         // —— 规则3：动态止损 —— 已按用户要求关闭（"不要设置自动止损"）
         // 只保留固定全仓止损（规则1/2），系统不再自动改止损

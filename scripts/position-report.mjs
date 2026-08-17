@@ -155,6 +155,11 @@ if (!positions.length) {
 
     lines.push(`${level} ${p.instId} · ${side} · ${qty} 张`);
     lines.push(`  结论：${verdict}`);
+    // 最新信号状态（用户要求：仓位通知提示最新信号）
+    const sig = oppByInst.get(p.instId);
+    const sigLine = sig ? (sig.signals || []).map(s => `${s.name} ${s.status}${s.score}分`).join(' · ') : '无信号数据';
+    const momLine = sig?.momentum ? `动量 #${sig.momentum.rank}/${sig.momentum.total}（12月+${(sig.momentum.return12m * 100).toFixed(0)}%）` : '动量:数据不足';
+    lines.push(`  📡 ${sigLine} | ${momLine}`);
     lines.push(`  💹 开仓 ${entry.toFixed(2)} → 当前 ${mark.toFixed(2)}（${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%）`);
     lines.push(`  🛡️ 硬止损 ${sl ? sl.toFixed(2) : '未设置'}${slSource ? `（${slSource}）` : ''}${tp ? ` · 止盈 ${tp.toFixed(2)}` : ' · 止盈未设置'}`);
     if (trailing) {

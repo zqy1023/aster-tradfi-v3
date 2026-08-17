@@ -131,8 +131,16 @@ const positionManager = new PositionManager({
       return lot;
     } catch { return 0.01; }
   },
-  onNotify: (actions) => {
-    const lines = actions.map((a) => `[仓位管理] ${a.action} ${a.instId} — ${a.detail}`);
+  onNotify: async (actions) => {
+    // 每条动作通知都带上当前信号状态（用户要求：仓位通知提示最新信号）
+    const lines = [];
+    for (const a of actions) {
+      const sig = await positionManager.getSignal(a.instId).catch(() => null);
+      const h4 = await positionManager.getH4Momentum(a.instId).catch(() => null);
+      const sigTxt = sig ? `信号:${sig.label || sig.decision}(${sig.direction || '?'})` : '信号:未知';
+      const momTxt = h4 !== null ? `4H动量:${(h4 * 100).toFixed(2)}%` : '4H动量:数据不足';
+      lines.push(`[仓位管理] ${a.action} ${a.instId} — ${a.detail} | ${sigTxt} · ${momTxt}`);
+    }
     process.stderr.write(lines.join('\n') + '\n');
     // 推送到实盘助手 QQ 机器人
     pushQQReport(lines.join('\n')).catch((error) => process.stderr.write(`[仓位管理] QQ推送失败 ${error?.message}\n`));
