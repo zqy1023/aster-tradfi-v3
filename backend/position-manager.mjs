@@ -93,37 +93,34 @@ export class PositionManager {
       // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
       const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
       if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
-      // ===== 仓位公式 v7（用户规则定稿 2026-08-17）=====
-      // 约束：
-      //   A. 风险预算: 止损亏损 ≤ 2%×方向系数 权益（最多6%）
-      //   B. 名义上限: 单笔名义 ≤ 权益 × 100%（用户指定：单笔≤100%权益，不是250%上限）
-      //   C. 保证金:   按 10x 杠杆算, 保证金 ≤ 可用 × 30%
-      //   D. 单笔开仓: 每轮最多开一笔（用户规则）
-      //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则）
-      const price = Number(opp.price);
-      if (!price || price <= 0) continue;
-      // ===== 滚仓v5 仓位公式（2026-08-18 杠杆优化: 3x→5x）=====
-      // 规则: 2标的各50%权益名义 + 5x杠杆 + 15%止损 + 40%止盈
-      //   单标的名义 = 权益 × 50%
-      //   保证金 = 名义 / 5 = 权益 × 10%（两仓共 20% 可用）
-      //   单笔止损亏损 = 名义 × 15% = 权益 × 7.5%（5x下=37.5%权益风险, 回测验证最优）
-      const lever = 5; // 杠杆优化: 5x(3x→5x 收益2.1倍, 回测5年均值148504 vs 69785)
-      const notionalCap = equity * 0.5; // 单标的名义 ≤ 50% 权益
+      // ===== 滚仓v5 凯利方案仓位公式（2026-08-18 最终版）=====
+      // 规则: 4标的各30.9%权益名义(全凯利) + 5x杠杆 + 15%止损 + 40%止盈
+      //   单标的名义 = 权益 × 30.9%（凯利 f* = (bp-q)/b = 30.9%, 胜率56.7%盈亏比1.68）
+      //   波动降权: ATR>5% 的标的仓位减半(回测+21%收益)
+      //   保证金 = 名义 / 5 = 权益 × 6.2%（四仓共 24.7% 可用）
+      const lever = 5;
+      // 波动降权: ATR>5% → 仓位减半（回测验证: 3x ETF高波动降权后收益+21%）
+      let kellyW = 0.309;
+      try {
+        const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.03);
+        if (atrPct > 0.05) kellyW = 0.309 * 0.5; // 高波动减半
+      } catch { /* 保持默认 */ }
+      const notionalCap = equity * kellyW; // 单标的名义 = 权益×凯利权重
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       let qtyB = Math.floor(notionalCap / price / lotSz + 1e-9) * lotSz;
-      // 保证金约束: 单仓保证金 ≤ 可用 × 40%（两仓共 80%，留 20% 缓冲）
-      const marginCap = available * 0.4;
+      // 保证金约束: 单仓保证金 ≤ 可用 × 15%（四仓共 60%，留 40% 缓冲）
+      const marginCap = available * 0.15;
       let qtyC = Math.floor(marginCap * lever / price / lotSz + 1e-9) * lotSz;
-      // 风险预算: 止损 15% 名义 → 亏损 ≤ 权益 × 10%
+      // 风险预算: 止损 15% 名义 → 亏损 ≤ 权益 × 6%（单仓）
       const lossPerUnit = price * 0.15;
-      let qtyA = Math.floor((equity * 0.10) / lossPerUnit / lotSz + 1e-9) * lotSz;
+      let qtyA = Math.floor((equity * 0.06) / lossPerUnit / lotSz + 1e-9) * lotSz;
       // 取最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
       // 浮点修正（OKX 51121）
       qty = Number((Math.floor(qty / lotSz) * lotSz).toFixed(6));
-      // 组合预算: 已有持仓名义 + 本次 ≤ 权益 × 100%（2标的总名义上限）
-      const comboCap = equity * 1.0;
+      // 组合预算: 已有持仓名义 + 本次 ≤ 权益 × 130%（4标的总名义上限）
+      const comboCap = equity * 1.3;
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
@@ -137,9 +134,10 @@ export class PositionManager {
       if (qty < lotSz) continue; // 预算不足，跳过该标的
       // D. 单笔开仓：已有持仓 或 本轮已开过 → 不再开（用户规则：每次只能开一笔）
       // 用 openedThisRound 防止内存同步延迟导致的重复开仓（实测bug: SNXX+KORU同轮都开了）
-      if (held.size > 0 || openedThisRound.size > 0) continue;
+      // 凯利方案: 最多4个持仓(动量#1-#4), 已满4个不再开
+      if (held.size >= 4 || openedThisRound.size > 0) continue;
       // 记录约束明细供理由展示
-      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义50%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损15%距离)`;
+      const constraintNote = `凯利权重${(kellyW*100).toFixed(1)}% / 名义${((notionalCap/equity)*100).toFixed(0)}%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损15%距离)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
