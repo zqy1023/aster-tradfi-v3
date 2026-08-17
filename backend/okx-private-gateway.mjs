@@ -264,10 +264,10 @@ export class OKXPrivateGateway {
   }
 
   // 为已有持仓挂止损/止盈（OKX order-algo 接口）— 保护性操作，不改变仓位大小
-  // params: { instId, side(当前持仓方向 buy=sell保护? 按OKX: 多单挂SL用sell), slTriggerPx?, tpTriggerPx?, closeFraction=1 }
-  async setPositionProtection({ instId, side = 'sell', slTriggerPx = null, tpTriggerPx = null, closeFraction = 1 } = {}) {
+  // size: 覆盖数量(张数); 传size则按张数, 否则 closeFraction 比例(默认1=全量)
+  async setPositionProtection({ instId, side = 'sell', slTriggerPx = null, tpTriggerPx = null, closeFraction = 1, size = null } = {}) {
     if (!slTriggerPx && !tpTriggerPx) throw new Error('至少提供一个止损或止盈价');
-    const algo = { instId, tdMode: 'cross', side, ordType: 'conditional', sz: String(closeFraction), triggerPxType: 'last' };
+    const algo = { instId, tdMode: 'cross', side, ordType: 'conditional', sz: String(size !== null && size > 0 ? size : closeFraction), triggerPxType: 'last' };
     if (slTriggerPx) Object.assign(algo, { slTriggerPx: String(slTriggerPx), slOrdPx: '-1' });
     if (tpTriggerPx) Object.assign(algo, { tpTriggerPx: String(tpTriggerPx), tpOrdPx: '-1' });
     // 调用 REST: POST /api/v5/trade/order-algo

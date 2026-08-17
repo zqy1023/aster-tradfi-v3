@@ -200,24 +200,31 @@ export class PositionManager {
 
         // —— 规则1：硬止损 —— 只读不干预：用户手动挂的(最新conditional)优先
         // 系统只在"完全没有硬止损"时才补一个（用户规则：硬止损 < 实际仓位2%；SNDK用1%）
-        // 修复重复挂单: 用 pendingSlInsts 记录本进程已挂过的，避免 getAlgos 同步延迟导致重复挂
+        // 修复bug: setProtection 必须传 sz=持仓数量, 否则OKX默认sz:1只覆盖1张(实测1717.79 sz:1裸仓)
         if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx)) && !this.pendingSlInsts.has(instId)) {
           const slDistPct = instId === 'SNDK-USDT-SWAP' ? 0.99 : 0.98; // SNDK 1%距离, 其他2%
           const slPx = side === 'long' ? mark * slDistPct : mark * (2 - slDistPct);
-          const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100 });
+          const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100, size: qty });
           if (result?.[0]?.algoId) this.pendingSlInsts.add(instId); // 记录已挂，本轮不再重复
-          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（${instId === 'SNDK-USDT-SWAP' ? '1%' : '2%'} 距离，符合用户规则），如已在 App 挂过请忽略` });
+          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（覆盖${qty}张, ${instId === 'SNDK-USDT-SWAP' ? '1%' : '2%'} 距离），如已在 App 挂过请忽略` });
         }
 
-        // —— 规则2：保护单去重 —— 保留最新创建的（用户手动改的优先）
+        // —— 规则2：保护单去重 —— 保留"覆盖全量"的单（sz 最大或 closeFraction=1）
+        // 修复bug: 原来按cTime保留最新, 但sz:1的部分单cTime更新反而被保留,
+        //         导致覆盖全量的单被取消, 持仓变裸仓(实测: 1717.79 sz:1保留, 1706.89全量被删)
         const hardSlAlgos = positionAlgos.filter((a) => (a.ordType === 'conditional' || a.ordType === 'oco') && Number(a.slTriggerPx));
         if (hardSlAlgos.length > 1) {
-          // 按 cTime 排序，保留最新的
-          hardSlAlgos.sort((a, b) => Number(a.cTime || 0) - Number(b.cTime || 0));
-          const keep = hardSlAlgos[hardSlAlgos.length - 1];
-          for (const dup of hardSlAlgos.slice(0, -1)) {
+          // 覆盖数量: sz 数字大者覆盖全; 空sz或closeFraction=1视为全量
+          const coverage = (a) => {
+            const sz = Number(a.sz || 0);
+            if (sz > 0) return sz;
+            return a.closeFraction === '1' || a.closeFraction === 1 ? 999 : 1;
+          };
+          hardSlAlgos.sort((a, b) => coverage(b) - coverage(a));
+          const keep = hardSlAlgos[0];
+          for (const dup of hardSlAlgos.slice(1)) {
             await this.cancelAlgo(gateway, { instId, algoId: dup.algoId });
-            actions.push({ action: '取消重复硬止损', instId, detail: `存在多个硬止损，取消 ${dup.algoId}（保留最新 ${keep.algoId} = ${keep.slTriggerPx}）` });
+            actions.push({ action: '取消重复硬止损', instId, detail: `存在多个硬止损，取消 ${dup.algoId}（保留覆盖全量 ${keep.algoId} = ${keep.slTriggerPx} sz=${keep.sz || '全量'}）` });
           }
         }
 
@@ -249,7 +256,7 @@ export class PositionManager {
             actions.push({ action: '接管动态止损', instId, detail: `取消 OKX 原生 move_order_stop（黑盒），改为系统自管条件单` });
           }
           if (!sysTrailing) {
-            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100 });
+            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100, size: qty });
             const algoId = result?.[0]?.algoId;
             if (algoId) this.sysTrailingIds.add(algoId);
             this.lastTrailingMove.set(instId, Date.now());
@@ -257,7 +264,7 @@ export class PositionManager {
           } else if (shouldUpdate) {
             // 上移：取消旧的 + 挂新的（触发线只上移，锁住更多利润）
             await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
-            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100 });
+            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100, size: qty });
             const newId = result?.[0]?.algoId;
             if (newId) { this.sysTrailingIds.delete(sysTrailing.algoId); this.sysTrailingIds.add(newId); }
             this.lastTrailingMove.set(instId, Date.now());
