@@ -61,6 +61,14 @@ export class PositionManager {
       if (held.has(opp.instId)) continue;                 // 已有持仓不开
       const cooldown = this.cooldowns.get(opp.instId);
       if (cooldown && now - cooldown < 30 * 60_000) continue; // 平仓后30分钟冷却
+      // 止损平仓检测：最近30分钟该标的有"卖出平仓"成交(止损触发) → 冷却(防止止损后立刻接回)
+      // bug修复: 止损平仓后positions条目被delete, 原冷却逻辑遍历不到 → 立刻重开
+      const recentFills = this.domain.fills?.filter?.((f) => f.instId === opp.instId && f.sourceTs && (now - Date.parse(f.sourceTs)) < 30 * 60_000) || [];
+      const stopOutFill = recentFills.find((f) => f.side === (opp.arbitration?.direction === 'long' ? 'sell' : 'buy'));
+      if (stopOutFill) {
+        this.cooldowns.set(opp.instId, Date.now());
+        continue; // 刚止损平仓过，冷却30分钟
+      }
       const arb = opp.arbitration || {};
       if (!arb.decision || !arb.decision.startsWith('final')) continue; // 非 final 不开
       const conv = this.conviction(opp.instId);
