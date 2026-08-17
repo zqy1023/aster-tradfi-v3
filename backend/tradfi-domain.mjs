@@ -619,6 +619,12 @@ export class TradFiDomain {
     const byInst = analysis?.byInst || [];
     const add = (level, title, detail, advice) => findings.push({ level, title, detail, advice });
 
+    // 0. 账户未连接(凭据失效/等待配置) → 不误报风险
+    if (risk?.source === 'waiting-account-ws' || risk?.source === 'pending') {
+      add('info', '账户待连接', 'OKX 账户凭据未配置或已失效，当前只读状态', '配置有效 API 凭据后自动恢复实时数据与诊断。');
+      return { summary: '账户待连接，等待配置 API 凭据', level: 'ok', findings };
+    }
+
     if (total === 0) {
       add('info', '暂无成交', '近 30 天没有成交，无法诊断行为', '开仓后系统会自动生成诊断。');
       return { summary: '近 30 天无交易', findings };

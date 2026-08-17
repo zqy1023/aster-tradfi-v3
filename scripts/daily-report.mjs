@@ -18,6 +18,7 @@ const [orders, ws, review] = await Promise.all([api('/api/v3/orders'), api('/api
 const positions = orders.positions || [];
 const equity = orders.risk?.equity || 0;
 const todayPnl = orders.risk?.todayPnl ?? 0;
+const accountPending = orders.risk?.source === 'waiting-account-ws' || orders.risk?.source === 'pending';
 const fills = (orders.fills || []).filter((f) => f.sourceTs?.startsWith(new Date().toISOString().slice(0, 10)));
 
 const lines = [];
@@ -25,8 +26,13 @@ lines.push(`📊 实盘日报 · ${new Date().toLocaleDateString('zh-CN', { mont
 lines.push('━━━━━━━━━━━━━━━━');
 
 // 今日操作
-lines.push(`💰 权益 ${equity.toFixed(2)} · 今日盈亏 ${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}`);
-lines.push(`📈 今日成交 ${fills.length} 笔`);
+if (accountPending) {
+  lines.push(`⚠️ 账户待连接（OKX 凭据未配置或已失效），权益数据暂不可用`);
+  lines.push(`📈 今日成交 ${fills.length} 笔`);
+} else {
+  lines.push(`💰 权益 ${equity.toFixed(2)} · 今日盈亏 ${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}`);
+  lines.push(`📈 今日成交 ${fills.length} 笔`);
+}
 
 // 持仓
 if (positions.length) {
