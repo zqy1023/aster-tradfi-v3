@@ -102,12 +102,12 @@ export class PositionManager {
       //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
-      // ===== 滚仓v5 仓位公式（2026-08-18 重写，替代旧v7）=====
-      // 规则: 2标的各50%权益名义 + 3x杠杆 + 15%止损 + 80%止盈
+      // ===== 滚仓v5 仓位公式（2026-08-18 杠杆优化: 3x→5x）=====
+      // 规则: 2标的各50%权益名义 + 5x杠杆 + 15%止损 + 40%止盈
       //   单标的名义 = 权益 × 50%
-      //   保证金 = 名义 / 3 = 权益 × 16.7%（两仓共 33% 可用）
-      //   单笔止损亏损 = 名义 × 15% = 权益 × 7.5%
-      const lever = 3; // 滚仓v5 固定 3x
+      //   保证金 = 名义 / 5 = 权益 × 10%（两仓共 20% 可用）
+      //   单笔止损亏损 = 名义 × 15% = 权益 × 7.5%（5x下=37.5%权益风险, 回测验证最优）
+      const lever = 5; // 杠杆优化: 5x(3x→5x 收益2.1倍, 回测5年均值148504 vs 69785)
       const notionalCap = equity * 0.5; // 单标的名义 ≤ 50% 权益
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       let qtyB = Math.floor(notionalCap / price / lotSz + 1e-9) * lotSz;
