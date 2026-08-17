@@ -23,6 +23,8 @@ export class OKXPrivateGateway {
     this.heartbeatTimer = null;
     this.closed = false;
     this.accountConfig = null;
+    this.lastMessageAt = null;
+    this.lastPingAt = null;
   }
 
   loginArgs() {
@@ -53,7 +55,8 @@ export class OKXPrivateGateway {
   }
 
   handleMessage(raw) {
-    if (String(raw) === 'pong') return;
+    if (String(raw) === 'pong') { this.lastMessageAt = Date.now(); return; }
+    this.lastMessageAt = Date.now();
     let payload;
     try { payload = JSON.parse(typeof raw === 'string' ? raw : String(raw)); } catch { return; }
     if (payload.event === 'login') {
@@ -63,7 +66,17 @@ export class OKXPrivateGateway {
         this.onState({ status: this.status, message: 'OKX 私有 WebSocket 登录成功', lastSyncAt: new Date().toISOString() });
         this.subscribe();
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-        this.heartbeatTimer = setInterval(() => { if (this.socket?.readyState === 1) this.socket.send('ping'); }, 20_000);
+        this.heartbeatTimer = setInterval(() => {
+          if (this.socket?.readyState === 1) {
+            this.lastPingAt = Date.now();
+            this.socket.send('ping');
+          }
+          // 半开连接检测：发 ping 后 40s 内无任何消息则强制断开重连
+          if (this.lastMessageAt && this.lastPingAt && Date.now() - this.lastMessageAt > 40_000) {
+            this.onState({ status: 'degraded', message: 'OKX 私有 WebSocket 心跳无响应，强制重连' });
+            this.socket?.terminate?.();
+          }
+        }, 20_000);
         this.reconcile().catch(() => this.onState({ status: this.status, message: 'OKX 私有 WS 已连接，初始历史对账稍后重试' }));
       } else {
         this.status = 'degraded'; this.onState({ status: this.status, message: `OKX 登录失败：${payload.msg || payload.code}` });

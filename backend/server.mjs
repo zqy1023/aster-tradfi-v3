@@ -42,7 +42,14 @@ const strategyManager = new StrategyManager({ repository: domainRepository });
 
 // 高频市场快照批量落库（5s 节流），避免逐条写库撑爆连接池与堆
 if (domainRepository) {
-  setInterval(() => domain.persistMarketSnapshots().catch((error) => console.error('[persist]', error.message)), 5_000).unref();
+  let persisting = false;
+  setInterval(() => {
+    if (persisting) return; // 上一批未完成则跳过，防止 DB 慢时队列无限积压
+    persisting = true;
+    domain.persistMarketSnapshots()
+      .catch((error) => console.error('[persist]', error.message))
+      .finally(() => { persisting = false; });
+  }, 5_000).unref();
 }
 const service = new AIResearchService({
   repository,
@@ -77,6 +84,39 @@ function compactMarketDetail(detail) {
   return { ...detail, candleCount: candles.length, candles: candles.slice(-2) };
 }
 
+// 序列化前剥离 K 线原始数组，减小 workstation 响应体积（raw 仅用于入库，前端不需要）
+function stripCandleRaw(candle) {
+  if (!candle || typeof candle !== 'object') return candle;
+  const { raw, ...rest } = candle;
+  return rest;
+}
+
+// —— OKX REST 全局限流（8 req/s 令牌桶，远低于 OKX 20 req/2s 限制）——
+const okxRateTokens = { count: 0, resetAt: Date.now() + 1000 };
+async function okxRateLimit() {
+  const now = Date.now();
+  if (now >= okxRateTokens.resetAt) { okxRateTokens.count = 0; okxRateTokens.resetAt = now + 1000; }
+  if (okxRateTokens.count >= 8) {
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1, okxRateTokens.resetAt - now)));
+    return okxRateLimit();
+  }
+  okxRateTokens.count += 1;
+}
+
+async function okxFetch(url, options = {}, timeoutMs = 12_000) {
+  await okxRateLimit();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`OKX REST 请求超时（${timeoutMs}ms）：${String(url).slice(0, 90)}`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function scheduleMarketBroadcast(instId) {
   if (!instId || marketFlushTimers.has(instId)) return;
   const timer = setTimeout(() => {
@@ -90,6 +130,8 @@ function scheduleMarketBroadcast(instId) {
   marketFlushTimers.set(instId, timer);
 }
 
+const privateFlushTimers = new Map();
+
 async function broadcastPrivate(principal) {
   const payload = await domain.privateTradingData(principal);
   for (const [res, client] of privateClients.entries()) {
@@ -98,12 +140,27 @@ async function broadcastPrivate(principal) {
   }
 }
 
+// 私有事件广播节流：1s 窗口内合并多次推送为一次，避免成交高峰每事件 4 个全量 DB 查询
+function schedulePrivateBroadcast(principal) {
+  const key = `${principal.tenantId}|${principal.userId}`;
+  if (privateFlushTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    privateFlushTimers.delete(key);
+    broadcastPrivate(principal).catch((error) => process.stderr.write(`[private-ws] 广播失败 ${error?.message || error}\n`));
+  }, 1_000);
+  privateFlushTimers.set(key, timer);
+}
+
 if (liveMarketEnabled) {
   okxGateway = new OKXMarketGateway({
     url: process.env.OKX_PUBLIC_WS_URL,
     onMessage: (message) => {
-      domain.ingestMarketMessage(message);
-      scheduleMarketBroadcast(message.instId);
+      try {
+        domain.ingestMarketMessage(message);
+        scheduleMarketBroadcast(message.instId);
+      } catch (error) {
+        process.stderr.write(`[public-ws] 处理行情消息异常 ${message?.type || 'unknown'}: ${error?.stack || error}\n`);
+      }
     },
     onState: (state) => Object.assign(domain.gatewayState, state),
   });
@@ -119,8 +176,12 @@ if (liveMarketEnabled) {
   okxBusinessGateway = new OKXMarketGateway({
     url: process.env.OKX_BUSINESS_WS_URL || 'wss://ws.okx.com:8443/ws/v5/business',
     onMessage: (message) => {
-      domain.ingestMarketMessage(message);
-      scheduleMarketBroadcast(message.instId);
+      try {
+        domain.ingestMarketMessage(message);
+        scheduleMarketBroadcast(message.instId);
+      } catch (error) {
+        process.stderr.write(`[business-ws] 处理K线消息异常 ${message?.type || 'unknown'}: ${error?.stack || error}\n`);
+      }
     },
     onState: (state) => Object.assign(domain.gatewayState, {
       businessStatus: state.status,
@@ -159,7 +220,7 @@ async function discoverTradFiInstruments() {
   if (!okxGateway) return;
   const discovered = [];
   for (const instType of ['SWAP', 'FUTURES']) {
-    const response = await fetch(`https://www.okx.com/api/v5/public/instruments?instType=${instType}`, { headers: { 'user-agent': 'aster-tradfi-v3' } });
+    const response = await okxFetch(`https://www.okx.com/api/v5/public/instruments?instType=${instType}`, { headers: { 'user-agent': 'aster-tradfi-v3' } });
     if (!response.ok) throw new Error(`OKX 合约目录请求失败：${response.status}`);
     const payload = await response.json();
     const rows = (payload.data || []).filter((row) => normalizeOkxInstrument(row).assetClass !== 'unknown');
@@ -195,7 +256,7 @@ async function ensureMarketCandles(instId, requestedBar = '15m', { background = 
     while (domain.getCandles(instId, bar).length < target) {
       const query = new URLSearchParams({ instId, bar, limit: '100' });
       if (cursor) query.set('after', cursor);
-      const response = await fetch(`https://www.okx.com/api/v5/market/history-candles?${query}`, { headers: { 'user-agent': 'aster-tradfi-v3' } });
+      const response = await okxFetch(`https://www.okx.com/api/v5/market/history-candles?${query}`, { headers: { 'user-agent': 'aster-tradfi-v3' } });
       if (!response.ok) break;
       const payload = await response.json();
       const rows = payload.data || [];
@@ -226,10 +287,10 @@ async function buildWorkstation(principal) {
   const selected = ranked.length ? ranked.slice(0, 12) : marketItems.filter((item) => item.instrument?.assetClass === 'equity').slice(0, 12);
   await Promise.all(selected.slice(0, 6).flatMap((item) => ['4H', '1D', '1W'].map((bar) => ensureMarketCandles(item.instId, bar, { background: true }))));
   const candleSets = Object.fromEntries(selected.map((item) => [item.instId, {
-    '4H': domain.getCandles(item.instId, '4H'),
-    '1D': domain.getCandles(item.instId, '1D'),
-    '1W': domain.getCandles(item.instId, '1W'),
-    default: domain.getCandles(item.instId, '15m'),
+    '4H': domain.getCandles(item.instId, '4H').slice(-240).map(stripCandleRaw),
+    '1D': domain.getCandles(item.instId, '1D').slice(-240).map(stripCandleRaw),
+    '1W': domain.getCandles(item.instId, '1W').slice(-240).map(stripCandleRaw),
+    default: domain.getCandles(item.instId, '15m').slice(-240).map(stripCandleRaw),
   }]));
   const [risk, privateData, review] = await Promise.all([
     domain.riskOverview(principal),
@@ -260,9 +321,13 @@ async function connectAccount(principal, accountId) {
     credentials,
     onState: (state) => domain.setAccountStatus(principal, accountId, { status: state.status === 'connected' ? 'connected' : state.status === 'disconnected' ? 'pending' : 'degraded', lastSyncAt: state.lastSyncAt, message: state.message }),
     onEvent: (event) => {
-      domain.setAccountStatus(principal, accountId, { lastSyncAt: event.recvTs });
-      domain.ingestPrivateEvent(principal, accountId, event);
-      broadcastPrivate(principal).catch(() => undefined);
+      try {
+        domain.setAccountStatus(principal, accountId, { lastSyncAt: event.recvTs });
+        domain.ingestPrivateEvent(principal, accountId, event);
+      } catch (error) {
+        process.stderr.write(`[private-ws] 处理私有事件异常 ${event?.payload?.arg?.channel || 'unknown'}: ${error?.stack || error}\n`);
+      }
+      schedulePrivateBroadcast(principal);
     },
   });
   accountGateways.set(accountId, gateway);
@@ -307,6 +372,33 @@ async function initializePrivateAccounts() {
 }
 
 initializePrivateAccounts().catch(() => undefined);
+
+// —— 启动重放：扫描悬置的 order_outbox（进程在 placeOrder 前后崩溃留下的 pending/failed 记录）——
+async function replayOutbox() {
+  if (!domainRepository?.listPendingOutbox || !process.env.OKX_TRADING_ENABLED === 'true') return;
+  try {
+    const pending = await domainRepository.listPendingOutbox();
+    if (!pending.length) return;
+    process.stderr.write(`[outbox] 发现 ${pending.length} 条悬置订单，标记为待人工对账\n`);
+    for (const item of pending) {
+      const intentId = item.intentId;
+      const intent = domain.intents.get(intentId);
+      // 无法确认下单前还是下单后崩溃：幂等 clOrdId 允许重放，但保守起见标记 unknown 并生成审计
+      const principal = { tenantId: item.tenantId, userId: '1', role: 'admin' };
+      if (intent) {
+        intent.status = 'unknown';
+        intent.updatedAt = new Date().toISOString();
+        domain.recordAudit(principal, 'order.outbox_replay', { orderId: intentId, reason: '重启后扫描到悬置提交，状态标为待对账', exchangeOrderId: intent.exchangeOrderId });
+        await domainRepository.updateOrderIntent(intent).catch(() => undefined);
+      }
+      await domainRepository.markOutboxDead(intentId, '重启后无法确认交易所状态，已标记待人工对账');
+    }
+    process.stderr.write('[outbox] 悬置订单处理完成\n');
+  } catch (error) {
+    process.stderr.write(`[outbox] 重放扫描失败 ${error?.message || error}\n`);
+  }
+}
+setTimeout(replayOutbox, 2_000).unref();
 
 const mimeTypes = Object.freeze({ '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' });
 
@@ -696,5 +788,31 @@ server.listen(port, '127.0.0.1', () => {
   process.stdout.write(`Aster TradFi Workstation V3 listening on 127.0.0.1:${port} provider=${provider.name}\n`);
 });
 
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-process.on('SIGINT', () => server.close(() => process.exit(0)));
+// —— 进程级异常兜底：WS 行情/私有事件或后台任务出现未捕获异常时，记录并继续运行，而不是崩溃 ——
+process.on('uncaughtException', (error) => {
+  process.stderr.write(`[uncaughtException] ${error?.stack || error}\n`);
+});
+process.on('unhandledRejection', (reason) => {
+  process.stderr.write(`[unhandledRejection] ${reason instanceof Error ? reason.stack : String(reason)}\n`);
+});
+
+// 优雅关闭：先断开 SSE 长连接与 WS 句柄，避免 close 回调被 keep-alive 阻塞导致被 systemd 强杀
+function shutdown(signal) {
+  process.stderr.write(`[shutdown] 收到 ${signal}，开始优雅关闭\n`);
+  try {
+    for (const [res, client] of marketClients.entries()) { clearInterval(client.heartbeat); res.destroy(); }
+    for (const [res, client] of privateClients.entries()) { clearInterval(client.heartbeat); res.destroy(); }
+    marketClients.clear();
+    privateClients.clear();
+    okxGateway?.close();
+    okxBusinessGateway?.close();
+    for (const gateway of accountGateways.values()) gateway?.close();
+    server.closeAllConnections?.();
+  } catch (error) {
+    process.stderr.write(`[shutdown] 清理异常 ${error?.message || error}\n`);
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3_000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

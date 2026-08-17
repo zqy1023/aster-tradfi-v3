@@ -15,6 +15,22 @@ const eventTime = (value, fallback = null) => {
 };
 const candleTimeframe = (channel = '') => String(channel).replace(/^candle/i, '') || '15m';
 const exchangeFactId = (prefix, ...parts) => `${prefix}-${createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 28).toUpperCase()}`;
+
+// 有界 Map：超过上限时淘汰最旧条目，防止运行期无限增长撑爆 512MB 堆
+function boundedMap(limit = 1000) {
+  const map = new Map();
+  map.limit = limit;
+  const originalSet = map.set.bind(map);
+  map.set = (key, value) => {
+    originalSet(key, value);
+    if (map.size > map.limit) {
+      const oldest = map.keys().next().value;
+      map.delete(oldest);
+    }
+    return map;
+  };
+  return map;
+}
 const publicAccount = (account) => {
   const { credentialCipher, ...safe } = account;
   return { ...clone(safe), canConnect: Boolean(credentialCipher) && account.environment === 'live' };
@@ -153,11 +169,11 @@ export class TradFiDomain {
     this.accounts = new Map([
       ['acct-demo', { id: 'acct-demo', tenantId: 'demo-tenant', ownerUserId: 'demo-user', name: 'Kevin · OKX TradFi 模拟账户', exchange: 'OKX', environment: 'demo', status: 'connected', lastSyncAt: this.clock(), permissions: ['读取', '交易（模拟）'], credentialMasked: '已加密保存 · 不在页面展示' }],
     ]);
-    this.runs = new Map();
-    this.intents = new Map();
-    this.fills = new Map();
-    this.exchangeOrders = new Map();
-    this.exchangeFills = new Map();
+    this.runs = boundedMap(200);
+    this.intents = boundedMap(1000);
+    this.fills = boundedMap(1000);
+    this.exchangeOrders = boundedMap(1000);
+    this.exchangeFills = boundedMap(2000);
     this.positions = new Map();
     this.accountSnapshots = new Map();
     this.reviews = new Map();
@@ -368,7 +384,19 @@ export class TradFiDomain {
     const todayPnl = snapshot.todayPnl;
     const equity = snapshot.equity;
     const dailyLimit = equity * 0.04;
-    return { source: snapshot.source, updatedAt: snapshot.updatedAt, mode: 'moderate', state: equity > 0 && Math.abs(todayPnl) >= dailyLimit ? 'halted' : 'normal', equity, available: snapshot.available, todayPnl, dailyLossLimit: -dailyLimit, drawdownPct: snapshot.drawdownPct, maxDrawdownPct: 20, openPositions: snapshot.openPositions, grossExposure: snapshot.grossExposure, limits: [{ name: '单日亏损', current: todayPnl, limit: -dailyLimit, unit: 'USD', state: 'normal' }, { name: '最大回撤', current: snapshot.drawdownPct, limit: 20, unit: '%', state: 'normal' }, { name: '单策略敞口', current: snapshot.grossExposure * 100, limit: 40, unit: '%', state: 'normal' }, { name: '连续亏损', current: 2, limit: 5, unit: '笔', state: 'normal' }], recentEvents: [{ ts: this.clock(), level: 'info', title: snapshot.source === 'okx-account-ws' ? 'OKX 账户 WS 对账正常' : '演示账户快照', detail: snapshot.source === 'okx-account-ws' ? '权益和可用余额来自私有 WebSocket' : '当前数值仅用于页面和风控流程验收' }, { ts: this.clock(), level: 'warn', title: 'NVDA 点差扩大', detail: '有效点差 14.2 bps，已阻止新开仓' }], orderCount: orders.length };
+    // 真实事件：只报告实际存在的状态（账户对账来源 + 最近的拒单/风控审计）
+    const recentEvents = [];
+    if (snapshot.source === 'okx-account-ws') {
+      recentEvents.push({ ts: snapshot.updatedAt || this.clock(), level: 'info', title: 'OKX 账户 WS 对账正常', detail: '权益和可用余额来自私有 WebSocket' });
+    } else if (accounts.some((account) => account.environment === 'live')) {
+      recentEvents.push({ ts: this.clock(), level: 'warn', title: '账户快照缺失', detail: 'OKX 私有 WS 尚未推送账户数据，风控数值不可信' });
+    }
+    const rejected = [...this.intents.values()].filter((intent) => intent.status === 'risk_rejected').slice(-3);
+    for (const intent of rejected) {
+      const firstFail = intent.risk?.checks?.find((check) => !check.passed);
+      recentEvents.push({ ts: intent.updatedAt || intent.createdAt, level: 'warn', title: `订单被风控拒绝：${intent.instId}`, detail: firstFail ? `${firstFail.label}：${firstFail.detail}` : '风控未通过' });
+    }
+    return { source: snapshot.source, updatedAt: snapshot.updatedAt, mode: 'moderate', state: equity > 0 && Math.abs(todayPnl) >= dailyLimit ? 'halted' : 'normal', equity, available: snapshot.available, todayPnl, dailyLossLimit: -dailyLimit, drawdownPct: snapshot.drawdownPct, maxDrawdownPct: 20, openPositions: snapshot.openPositions, grossExposure: snapshot.grossExposure, limits: [{ name: '单日亏损', current: todayPnl, limit: -dailyLimit, unit: 'USD', state: 'normal' }, { name: '最大回撤', current: snapshot.drawdownPct, limit: 20, unit: '%', state: 'normal' }, { name: '单策略敞口', current: snapshot.grossExposure * 100, limit: 40, unit: '%', state: 'normal' }, { name: '连续亏损', current: snapshot.consecutiveLosses || 0, limit: 5, unit: '笔', state: 'normal' }], recentEvents, orderCount: orders.length };
   }
 
   ingestPrivateEvent(principal, accountId, event) {
@@ -710,7 +738,7 @@ export class TradFiDomain {
 
   async auditEvents(principal) { if (this.repository) return this.repository.listAudit(this.tenant(principal)); return this.audit.filter((event) => event.tenantId === this.tenant(principal)).slice(-50).reverse().map(clone); }
 
-  recordAudit(principal, type, detail) { const event = { id: id('AUD'), tenantId: this.tenant(principal), actor: principal.userId, type, detail, createdAt: this.clock() }; this.audit.push(event); if (this.repository) this.repository.saveAudit(event).catch(() => undefined); }
+  recordAudit(principal, type, detail) { const event = { id: id('AUD'), tenantId: this.tenant(principal), actor: principal.userId, type, detail, createdAt: this.clock() }; this.audit.push(event); if (this.audit.length > 1000) this.audit.splice(0, this.audit.length - 1000); if (this.repository) this.repository.saveAudit(event).catch(() => undefined); }
 }
 
 export { INSTRUMENTS };

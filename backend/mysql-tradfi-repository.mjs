@@ -148,6 +148,23 @@ export class MySQLTradFiRepository {
     }));
   }
 
+  async listPendingOutbox() {
+    const [rows] = await this.pool.execute(
+      `SELECT intent_id,tenant_id,event_type,payload_json,status,attempts,next_attempt_at,created_at
+       FROM order_outbox
+       WHERE event_type='submit' AND status IN ('pending','failed')
+       ORDER BY created_at ASC LIMIT 50`,
+    );
+    return rows.map((row) => ({ intentId: row.intent_id, tenantId: String(row.tenant_id), eventType: row.event_type, payload: parseJson(row.payload_json, {}), status: row.status, attempts: row.attempts, nextAttemptAt: iso(row.next_attempt_at), createdAt: iso(row.created_at) }));
+  }
+
+  async markOutboxDead(intentId, reason) {
+    await this.pool.execute(
+      "UPDATE order_outbox SET status='dead_letter',last_error=?,updated_at=UTC_TIMESTAMP(3) WHERE intent_id=? AND event_type='submit' AND status NOT IN ('confirmed','dead_letter')",
+      [String(reason || '重启后无法确认交易所状态').slice(0, 240), intentId],
+    );
+  }
+
   async upsertStrategy(strategy) {
     await this.pool.execute(
       `INSERT INTO strategy_definitions (id,tenant_id,name,style,asset_class,primary_timeframe,confirmation_timeframe,hypothesis,status,created_by,created_at,updated_at)

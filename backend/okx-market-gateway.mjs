@@ -29,7 +29,15 @@ export class OKXMarketGateway {
       if (this.subscriptions.size) this.subscribe([...this.subscriptions].map((item) => JSON.parse(item)));
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = setInterval(() => {
-        if (this.socket?.readyState === 1) this.socket.send('ping');
+        if (this.socket?.readyState === 1) {
+          this.lastPingAt = Date.now();
+          this.socket.send('ping');
+        }
+        // 半开连接检测：发 ping 后 2 个心跳周期（40s）内没有任何消息则强制断开重连
+        if (this.lastMessageAt && this.lastPingAt && Date.now() - this.lastMessageAt > 40_000) {
+          this.onState({ status: 'degraded', message: 'OKX 公共 WebSocket 心跳无响应，强制重连' });
+          this.socket?.terminate?.();
+        }
       }, 20_000);
     });
     this.socket.addEventListener('message', (event) => this.handleMessage(event.data));
