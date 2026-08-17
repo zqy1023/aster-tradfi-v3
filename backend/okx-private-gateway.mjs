@@ -171,6 +171,31 @@ export class OKXPrivateGateway {
     return this.privateGet(`/api/v5/trade/orders-algo-history?ordType=move_order_stop&state=effective&instType=${encodeURIComponent(instType)}`);
   }
 
+  // 取消算法单（动态止损/条件单）— OKX 端点是 cancel-algos（复数）
+  async cancelAlgo({ instId, algoId } = {}) {
+    if (!instId || !algoId) throw new Error('取消算法单缺少 instId/algoId');
+    const body = JSON.stringify([{ instId, algoId }]);
+    const timestamp = new Date().toISOString();
+    const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}POST/api/v5/trade/cancel-algos${body}`).digest('base64');
+    const response = await this.fetchImpl(`${this.restUrl}/api/v5/trade/cancel-algos`, {
+      method: 'POST',
+      headers: {
+        'OK-ACCESS-KEY': this.credentials.apiKey,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': this.credentials.passphrase,
+        'content-type': 'application/json',
+        'user-agent': 'aster-tradfi-v3',
+      },
+      body,
+    });
+    const payload = await response.json();
+    if (payload.code !== '0') throw new Error(`OKX 取消算法单失败：${payload.msg || payload.code}`);
+    const rejected = (payload.data || []).find((x) => x.sCode && x.sCode !== '0');
+    if (rejected) throw new Error(`OKX 取消算法单失败：${rejected.sMsg || rejected.sCode}`);
+    return payload.data || [];
+  }
+
   async setTrailingStop({ instId, side = 'sell', size, callbackRatio = 0.01, activePx = null, posSide = 'net' } = {}) {
     if (!instId || !(Number(size) > 0)) throw new Error('移动止损缺少标的或数量');
     const algo = {

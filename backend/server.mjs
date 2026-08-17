@@ -20,6 +20,7 @@ import { buildWorkstationSnapshot, buildReview } from './workstation-domain.mjs'
 import { MarketEventService } from './market-events.mjs';
 import { StrategyManager } from './strategy-manager.mjs';
 import { EquityMomentumSource } from './equity-momentum-source.mjs';
+import { PositionManager } from './position-manager.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const webDir = join(rootDir, 'web');
@@ -38,8 +39,71 @@ const liveMarketEnabled = process.env.OKX_WS_ENABLED === 'true';
 const domain = new TradFiDomain({ credentialVault, repository: domainRepository, gateway: liveMarketEnabled });
 const momentumSource = new EquityMomentumSource();
 momentumSource.load().catch((error) => console.error('[momentum-source] 加载失败', error.message));
+
+// —— 常驻仓位管理器：保护单完整性/去重/动态止损/仓位风险 ——
+// 方向确信度（复用 momentum 排名，与报告一致）
+function convictionFor(instId) {
+  const sym = String(instId).replace(/-USDT-SWAP$/, '');
+  const mom = momentumSource.momentumFor(instId) || momentumSource.rankMomentum().get(sym);
+  if (!mom) return { level: '未知', mult: 1 };
+  const pct = mom.rank / Math.max(1, mom.total);
+  if (pct <= 0.1) return { level: '强烈', mult: 3.3 };
+  if (pct <= 0.3) return { level: '明确', mult: 2.6 };
+  if (pct <= 0.5) return { level: '中等', mult: 2.0 };
+  return { level: '偏弱', mult: 1.0 };
+}
+const positionManager = new PositionManager({
+  domain,
+  getGateway: (accountId) => accountGateways.get(accountId),
+  getAlgos: (gateway) => gateway.listPendingAlgos('SWAP'),
+  setProtection: (gateway, params) => gateway.setPositionProtection(params),
+  setTrailing: (gateway, params) => gateway.setTrailingStop(params),
+  cancelAlgo: (gateway, params) => gateway.cancelAlgo(params),
+  // 减仓执行：市价只减仓单（通过 WS order 通道，reduceOnly）
+  reducePosition: async (gateway, { instId, side, qty }) => {
+    const intent = {
+      id: `MGR-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase(),
+      instId, side, orderType: 'market', size: qty, reduceOnly: true,
+    };
+    const result = await gateway.placeOrder(intent);
+    domain.recordAudit({ tenantId: '1', userId: '1', role: 'admin' }, 'position.auto_reduce', { instId, side, qty, reason: '风险超上限自动减仓', result });
+    return result;
+  },
+  conviction: convictionFor,
+  onNotify: (actions) => {
+    const lines = actions.map((a) => `[仓位管理] ${a.action} ${a.instId} — ${a.detail}`);
+    process.stderr.write(lines.join('\n') + '\n');
+    // 推送到实盘助手 QQ 机器人
+    pushQQReport(lines.join('\n')).catch((error) => process.stderr.write(`[仓位管理] QQ推送失败 ${error?.message}\n`));
+  },
+});
 const marketEventService = new MarketEventService({ repository: domainRepository });
 const strategyManager = new StrategyManager({ repository: domainRepository });
+
+// —— 实盘助手 QQ 机器人推送（复用仓位报告通道）——
+const QQ_APP_ID = '1905392792';
+const QQ_APP_SECRET = 'HFEDDDEFHJMPTXciov2AIRaku5GSer4I';
+const QQ_OPENID = '0BDDCDB92BC6BDBE131D6641BDDDD4F1';
+async function pushQQReport(content) {
+  const tokenResp = await fetch('https://bots.qq.com/app/getAppAccessToken', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ appId: QQ_APP_ID, clientSecret: QQ_APP_SECRET }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const tokenJson = await tokenResp.json();
+  const token = tokenJson.access_token;
+  if (!token) throw new Error(`QQ token 获取失败：${tokenJson.message || 'unknown'}`);
+  const resp = await fetch(`https://api.sgroup.qq.com/v2/users/${QQ_OPENID}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `QQBot ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ content, msg_type: 0 }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const json = await resp.json();
+  if (!json.id) throw new Error(`QQ 发送失败：${json.message || json.code || 'unknown'}`);
+  return json;
+}
 
 // 高频市场快照批量落库（5s 节流），避免逐条写库撑爆连接池与堆
 if (domainRepository) {
@@ -52,6 +116,13 @@ if (domainRepository) {
       .finally(() => { persisting = false; });
   }, 5_000).unref();
 }
+
+// 仓位管理器定时兜底：30s 一轮，即使私有 WS 静默也定期检查保护单/仓位
+setInterval(() => {
+  positionManager.evaluate({ force: true })
+    .then((res) => { if (res && (res.error || res.actions?.length)) process.stderr.write(`[仓位管理] 评估: ${JSON.stringify(res)}\n`); })
+    .catch((error) => process.stderr.write(`[仓位管理] 评估异常 ${error?.stack || error}\n`));
+}, 30_000).unref();
 const service = new AIResearchService({
   repository,
   provider,
@@ -398,6 +469,11 @@ async function connectAccount(principal, accountId) {
       try {
         domain.setAccountStatus(principal, accountId, { lastSyncAt: event.recvTs });
         domain.ingestPrivateEvent(principal, accountId, event);
+        // 持仓/成交事件到达 → 触发仓位管理器评估（15s 节流）
+        const ch = event?.payload?.arg?.channel;
+        if (ch === 'positions' || ch === 'orders' || ch === 'fills') {
+          positionManager.evaluate().catch(() => undefined);
+        }
       } catch (error) {
         process.stderr.write(`[private-ws] 处理私有事件异常 ${event?.payload?.arg?.channel || 'unknown'}: ${error?.stack || error}\n`);
       }
@@ -690,6 +766,22 @@ const server = createServer(async (req, res) => {
       const [data, risk] = await Promise.all([domain.privateTradingData(principal), domain.riskOverview(principal)]);
       json(res, 200, { ...data, orders: data.intents, risk }); return;
     }
+    // 取消算法保护单（动态止损/条件单）
+    if (url.pathname === '/api/v3/positions/algos/cancel' && req.method === 'POST') {
+      const principal = requirePrincipal(req, res); if (!principal) return;
+      const input = await readJson(req);
+      const { instId, algoId } = input;
+      if (!instId || !algoId) { json(res, 400, { error: '缺少 instId/algoId' }); return; }
+      const accounts = await domain.listAccounts(principal);
+      const account = accounts.find((a) => a.environment === 'live');
+      const gateway = account ? accountGateways.get(account.id) : null;
+      if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有连接未就绪' }); return; }
+      const result = await gateway.cancelAlgo({ instId, algoId });
+      domain.recordAudit(principal, 'position.algo_cancel', { instId, algoId, reason: '清理重复保护单', result });
+      json(res, 200, { ok: true, result });
+      return;
+    }
+
     // 查询已有持仓的算法保护单（动态止损/止盈止损）
     if (url.pathname === '/api/v3/positions/algos' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;
