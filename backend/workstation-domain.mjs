@@ -389,6 +389,30 @@ export function buildWorkstationSnapshot({ instruments = [], marketItems = [], c
     return momSignal && momSignal.scoreBasis && momSignal.scoreBasis.some((b) => b.includes('排名'));
   });
   const opportunities = dedupeTopEquities(decisionsWithMomentum.length ? decisionsWithMomentum : decisions);
+  // —— 交易员视角：标注已持仓标的，避免同向重复推荐诱导加仓 ——
+  const heldPositions = (privateData.positions || []).filter((p) => Number(p.quantity) !== 0);
+  const heldByInst = new Map();
+  for (const p of heldPositions) {
+    const existing = heldByInst.get(p.instId) || [];
+    existing.push({ side: p.side, qty: Math.abs(Number(p.quantity)) });
+    heldByInst.set(p.instId, existing);
+  }
+  for (const opp of opportunities) {
+    const held = heldByInst.get(opp.instId);
+    if (held?.length) {
+      const heldLong = held.some((h) => h.side === 'long');
+      const heldShort = held.some((h) => h.side === 'short');
+      opp.held = { sides: held.map((h) => h.side), totalQty: held.reduce((s, h) => s + h.qty, 0) };
+      // 同向重复推荐 → 标记为"已持仓"，降权提示
+      if ((opp.arbitration?.direction === 'long' && heldLong) || (opp.arbitration?.direction === 'short' && heldShort)) {
+        opp.held.sameDirection = true;
+        opp.score = Math.round(opp.score * 0.85); // 降权，避免诱导加仓
+        opp.scoreBasis = [...(opp.scoreBasis || []), '已持仓同向，降权 15% 避免诱导加仓'];
+      } else if (opp.arbitration?.direction && (opp.arbitration.direction === 'long' ? heldShort : heldLong)) {
+        opp.held.opposite = true; // 反向持仓 → 可能是减仓/平仓机会
+      }
+    }
+  }
   const session = marketSession(nowMs);
   const readyCount = decisions.filter((item) => item.arbitration.decision.startsWith('final')).length;
   const connected = connection.status === 'connected';

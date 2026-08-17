@@ -338,16 +338,26 @@
         const stop = plan.stop != null ? fmt(plan.stop, 4) : '—';
         const target = plan.target1 != null ? fmt(plan.target1, 4) : '—';
         const momTag = mom ? `<span class="chip">动量 #${mom.rank}/${mom.total}</span>` : '';
+        // 已持仓标注
+        let heldTag = '';
+        if (item.held) {
+          const sideTxt = item.held.sides.includes('long') ? '多' : '空';
+          heldTag = item.held.sameDirection
+            ? `<span class="chip" style="background:rgba(255,166,0,.15);color:#ffa600">已持仓${sideTxt}·同向·谨慎</span>`
+            : item.held.opposite
+              ? `<span class="chip" style="background:rgba(98,198,255,.12);color:#62c6ff">已持仓${sideTxt}·反向·减仓机会</span>`
+              : `<span class="chip">已持仓 ${sideTxt} ${item.held.totalQty}张</span>`;
+        }
         return `
         <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
           <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} <span class="${dirClass}">${dirText}</span></strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
           <div class="opp-plan">
             <div><span>现价</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
             <div><span>进场</span><b class="num">${entry}</b></div>
-            <div><span>止损</span><b class="num ${isLong ? '' : ''}">${stop}</b></div>
+            <div><span>止损</span><b class="num">${stop}</b></div>
             <div><span>止盈</span><b class="num">${target}</b></div>
           </div>
-          <div class="opp-meta" style="margin-top:4px">${momTag}<span class="chip">${esc(item.arbitration?.reason || item.trigger?.label || '')}</span></div>
+          <div class="opp-meta" style="margin-top:4px">${momTag}${heldTag}<span class="chip">${esc(item.arbitration?.reason || item.trigger?.label || '')}</span></div>
         </button>`;
       }).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
       $$('.opp').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
@@ -373,6 +383,12 @@
         ...(signal.scoreBasis || []).map(b => ({ text: b, ok: /\+(\d+)/.test(b) && !/\+0/.test(b) })),
         ...(signal.blockers || []).map(b => ({ text: '未满足：' + b, ok: false })),
       ]);
+      // 已持仓：显示实盘实际保护（硬止损/动态止损），替代策略参考位
+      let heldNote = '';
+      if (item.held) {
+        const sideTxt = item.held.sides.includes('long') ? '多' : '空';
+        heldNote = `<div class="danger-note" style="margin-top:10px">⚠️ 已持仓 ${sideTxt} ${item.held.totalQty} 张${item.held.sameDirection ? ' · 同向：这是加仓建议，不是新开仓；请以实盘挂的保护单为准' : item.held.opposite ? ' · 反向：考虑减仓/平仓' : ''}</div>`;
+      }
       $('#decision-panel').innerHTML = `
         <div class="decision-box ${final ? 'final' : ''}">
           <div style="display:flex;justify-content:space-between;align-items:center"><h3>${esc(item.underlying)} · <span class="${isLong ? 'green' : dir === 'short' ? 'red' : ''}" style="font-size:18px">${dirText}</span></h3><span class="chip">${esc(item.arbitration.reason || '')}</span></div>
@@ -386,6 +402,7 @@
         </div>
         <div class="decision-box"><h3>条件清单</h3><div class="check-row" style="display:grid;gap:4px;margin-top:6px">${conditions.slice(0, 10).map(c => `<div style="display:flex;gap:6px"><span class="${c.ok ? 'green' : 'red'}">${c.ok ? '✓' : '✗'}</span><span class="${c.ok ? '' : 'amber'}">${esc(c.text)}</span></div>`).join('') || '<div class="muted">暂无条件</div>'}</div></div>
         <div class="decision-box"><h3>信号明细</h3>${item.signals.map(signal => `<div class="signal"><div class="signal-title"><strong>${esc(signal.name)} · ${signal.score}分</strong><span class="status ${signal.status === 'ready' ? 'ok' : signal.status === 'blocked' ? 'bad' : 'warn'}">${esc(signal.status)}</span></div><ul style="margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:12px">${signal.evidence.map(x => `<li>${esc(x)}</li>`).join('')}${signal.blockers.map(x => `<li class="amber">${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
+        ${heldNote}
         <div class="actions" style="margin-top:12px"><button class="btn primary" id="open-cockpit">打开K线</button><button class="btn" id="copy-to-order">同步到预检</button></div>`;
       const openBtn = $('#open-cockpit'); if (openBtn) openBtn.onclick = () => { selectInstrument(item.instId, { goCockpit: true }); };
       const copyBtn = $('#copy-to-order'); if (copyBtn) copyBtn.onclick = () => { fillOrderFromPlan(item); navigate('live'); };

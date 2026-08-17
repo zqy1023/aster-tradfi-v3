@@ -85,7 +85,10 @@ if (!positions.length) {
     const positionAlgos = algosByInst.get(p.instId) || [];
     const trailing = positionAlgos.find((a) => a.ordType === 'move_order_stop' || Number(a.callbackRatio) > 0) || null;
     const conditional = positionAlgos.filter((a) => a.ordType === 'conditional' || Number(a.slTriggerPx) || Number(a.tpTriggerPx));
-    const sl = Number(nativeAlgo.slTriggerPx || conditional.find(a => Number(a.slTriggerPx))?.slTriggerPx || 0);
+    // 硬止损：读最新创建的 conditional 止损单（App 手动挂的优先），标注来源
+    const hardSlAlgo = conditional.find(a => Number(a.slTriggerPx)) || null;
+    const sl = Number(hardSlAlgo?.slTriggerPx || 0);
+    const slSource = hardSlAlgo ? (hardSlAlgo.cTime && (Date.now() - Number(hardSlAlgo.cTime)) < 3600_000 ? 'App手动挂单' : '系统挂单') : '';
     const tp = Number(nativeAlgo.tpTriggerPx || conditional.find(a => Number(a.tpTriggerPx))?.tpTriggerPx || 0);
     const holdMin = Math.round((Date.now() - (Date.parse(p.sourceTs || p.recvTs) || Date.now())) / 60000);
     const pct = entry ? (mark - entry) / entry * 100 * (side === '多' ? 1 : -1) : 0;
@@ -152,7 +155,7 @@ if (!positions.length) {
     lines.push(`${level} ${p.instId} · ${side} · ${qty} 张`);
     lines.push(`  结论：${verdict}`);
     lines.push(`  💹 开仓 ${entry.toFixed(2)} → 当前 ${mark.toFixed(2)}（${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%）`);
-    lines.push(`  🛡️ 硬止损 ${sl ? sl.toFixed(2) : '未设置'}${tp ? ` · 止盈 ${tp.toFixed(2)}` : ' · 止盈未设置'}`);
+    lines.push(`  🛡️ 硬止损 ${sl ? sl.toFixed(2) : '未设置'}${slSource ? `（${slSource}）` : ''}${tp ? ` · 止盈 ${tp.toFixed(2)}` : ' · 止盈未设置'}`);
     if (trailing) {
       lines.push(`  🔄 动态止损 生效中 · 激活 ${Number(trailing.activePx || 0).toFixed(2)} · 回撤 ${(Number(trailing.callbackRatio || 0) * 100).toFixed(2)}% · ${trailing.sz || qty} 张`);
     } else {

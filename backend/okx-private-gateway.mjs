@@ -105,7 +105,10 @@ export class OKXPrivateGateway {
   async privateGet(path) {
     const timestamp = new Date().toISOString();
     const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}GET${path}`).digest('base64');
-    const response = await this.fetchImpl(`${this.restUrl}${path}`, { headers: { 'OK-ACCESS-KEY': this.credentials.apiKey, 'OK-ACCESS-SIGN': sign, 'OK-ACCESS-TIMESTAMP': timestamp, 'OK-ACCESS-PASSPHRASE': this.credentials.passphrase, 'content-type': 'application/json', 'user-agent': 'aster-tradfi-v3' } });
+    const response = await this.fetchImpl(`${this.restUrl}${path}`, {
+      headers: { 'OK-ACCESS-KEY': this.credentials.apiKey, 'OK-ACCESS-SIGN': sign, 'OK-ACCESS-TIMESTAMP': timestamp, 'OK-ACCESS-PASSPHRASE': this.credentials.passphrase, 'content-type': 'application/json', 'user-agent': 'aster-tradfi-v3' },
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!response.ok) throw new Error(`OKX 私有数据对账失败：HTTP ${response.status}`);
     const payload = await response.json();
     if (payload.code !== '0') throw new Error(`OKX 私有数据对账失败：${payload.msg || payload.code}`);

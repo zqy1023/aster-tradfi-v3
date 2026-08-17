@@ -37,7 +37,7 @@ export class PositionManager {
       if (!gateway || gateway.status !== 'connected') return { gatewayOffline: true };
 
       const positions = [...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0);
-      const algos = await this.getAlgos(gateway).catch(() => []);
+      const algos = await this.getAlgos(gateway).catch((e) => { process.stderr.write(`[仓位管理] getAlgos 失败: ${e?.stack || e}\n`); return []; });
       const actions = [];
 
       for (const pos of positions) {
@@ -57,18 +57,24 @@ export class PositionManager {
         const targetRiskPct = 2 * (conv?.mult || 1);
         const distLiq = mark && liq ? Math.abs(mark - liq) / mark * 100 : null;
 
-        // —— 规则1：无硬止损 → 自动挂（用 ATR 估算或 2% 权益反推）——
-        if (!hardSl) {
+        // —— 规则1：硬止损 —— 只读不干预：用户手动挂的(最新conditional)优先
+        // 系统只在"完全没有硬止损"时才补一个 2% 距离的（保护裸仓）
+        if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx))) {
           const slPx = side === 'long' ? mark * 0.98 : mark * 1.02; // 默认 2% 距离
           await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: slPx });
-          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（2% ATR 距离）` });
+          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（2% 距离），如已在 App 挂过请忽略` });
         }
 
-        // —— 规则2：保护单去重 ——
-        const extraHard = positionAlgos.filter((a) => (a.ordType === 'conditional' || a.ordType === 'oco') && Number(a.slTriggerPx) && a.algoId !== hardSl?.algoId);
-        for (const dup of extraHard) {
-          await this.cancelAlgo(gateway, { instId, algoId: dup.algoId });
-          actions.push({ action: '取消重复硬止损', instId, detail: `存在多个硬止损，取消 ${dup.algoId}（保留 ${hardSl?.algoId}）` });
+        // —— 规则2：保护单去重 —— 保留最新创建的（用户手动改的优先）
+        const hardSlAlgos = positionAlgos.filter((a) => (a.ordType === 'conditional' || a.ordType === 'oco') && Number(a.slTriggerPx));
+        if (hardSlAlgos.length > 1) {
+          // 按 cTime 排序，保留最新的
+          hardSlAlgos.sort((a, b) => Number(a.cTime || 0) - Number(b.cTime || 0));
+          const keep = hardSlAlgos[hardSlAlgos.length - 1];
+          for (const dup of hardSlAlgos.slice(0, -1)) {
+            await this.cancelAlgo(gateway, { instId, algoId: dup.algoId });
+            actions.push({ action: '取消重复硬止损', instId, detail: `存在多个硬止损，取消 ${dup.algoId}（保留最新 ${keep.algoId} = ${keep.slTriggerPx}）` });
+          }
         }
 
         // —— 规则3：动态止损 ——
