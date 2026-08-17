@@ -51,24 +51,26 @@ export class PositionManager {
       // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
       const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
       if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
-      // ===== 仓位公式 v5（用户要求: 保证金约束还原10x）=====
+      // ===== 仓位公式 v6（用户硬性风控规则 2026-08-17）=====
       // 约束：
       //   A. 风险预算: 止损亏损 ≤ 2%×方向系数 权益（最多6%）
-      //   B. 名义上限: 名义金额 ≤ 权益 × 100%（防巨仓）
-      //   C. 保证金:   按 10x 杠杆算, 保证金 ≤ 可用 × 30%（用户指定10x）
+      //   B. 名义上限: 开仓名义 ≤ 总仓位(权益) × 250%（用户规则：名义<总仓位250%）
+      //   C. 保证金:   按 10x 杠杆算, 保证金 ≤ 可用 × 30%
       //   D. 单笔开仓: 每轮评估最多开一笔（用户规则：每次只能开一笔）
+      //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则：硬止损<实际仓位2%）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
       const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
-      const slPct = Math.min(0.05, Math.max(0.015, atrPct * 2)); // 止损距离 1.5%~5%
+      // E. 硬止损距离：≤ 现价×2%（用户规则），ATR 只在 2% 内参考
+      const slPct = Math.min(0.02, Math.max(0.01, atrPct * 2)); // 止损距离 1%~2%（上限2%）
       const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算上限6%
       const riskUsd = equity * riskBudgetPct;
       const lossPerUnit = price * slPct;
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       // A. 风险预算约束的张数
       let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
-      // B. 名义上限约束：名义 ≤ 权益 × 1.0（防巨仓）
-      const notionalCap = equity * 1.0;
+      // B. 名义上限约束：开仓名义 ≤ 权益 × 250%（用户规则）
+      const notionalCap = equity * 2.5;
       let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
       // C. 保证金约束（10x 杠杆, 保证金 ≤ 可用×30%）
       const lever = 10;
@@ -77,22 +79,22 @@ export class PositionManager {
       // 取三者最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // 组合预算：已有持仓名义 + 本次 ≤ 权益×1.0
+      // 组合预算：已有持仓名义 + 本次 ≤ 权益×250%（用户规则）
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
           usedNotional += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0);
         }
       }
-      if (usedNotional + qty * price > equity * 1.0) {
-        const remain = Math.max(0, equity * 1.0 - usedNotional);
+      if (usedNotional + qty * price > equity * 2.5) {
+        const remain = Math.max(0, equity * 2.5 - usedNotional);
         qty = Math.floor(remain / price / lotSz) * lotSz;
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
       // D. 单笔开仓：已有持仓时本轮不再开（用户规则：每次只能开一笔）
       if (held.size > 0) continue;
       // 记录约束明细供理由展示
-      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义1倍${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益)`;
+      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义250%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损${(slPct*100).toFixed(1)}%距离)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
@@ -168,11 +170,11 @@ export class PositionManager {
         const distLiq = mark && liq ? Math.abs(mark - liq) / mark * 100 : null;
 
         // —— 规则1：硬止损 —— 只读不干预：用户手动挂的(最新conditional)优先
-        // 系统只在"完全没有硬止损"时才补一个 2% 距离的（保护裸仓）
+        // 系统只在"完全没有硬止损"时才补一个（用户规则：硬止损 < 实际仓位2%距离）
         if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx))) {
-          const slPx = side === 'long' ? mark * 0.98 : mark * 1.02; // 默认 2% 距离
-          await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: slPx });
-          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（2% 距离），如已在 App 挂过请忽略` });
+          const slPx = side === 'long' ? mark * 0.98 : mark * 1.02; // 2% 距离（用户规则上限）
+          await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100 });
+          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（2% 距离，符合用户规则），如已在 App 挂过请忽略` });
         }
 
         // —— 规则2：保护单去重 —— 保留最新创建的（用户手动改的优先）
@@ -193,6 +195,7 @@ export class PositionManager {
         const peak = this.peakPrices.get(instId) || { high: mark, at: Date.now() };
         if (mark > peak.high) { peak.high = mark; peak.at = Date.now(); this.peakPrices.set(instId, peak); }
         // 自适应回调：1分钟级波动约 0.1-0.3%，回调取波动 × 1.2，夹在 0.3%~1.5%
+        // 用户规则: 硬止损<2%距离 → 回调上限1.5%保证止损在2%内
         const atrPct = await this.getAtrPct(instId).catch(() => 0.003);
         const callback = Math.min(0.015, Math.max(0.003, atrPct * 1.2));
         const triggerLine = side === 'long' ? peak.high * (1 - callback) : peak.high * (1 + callback);
