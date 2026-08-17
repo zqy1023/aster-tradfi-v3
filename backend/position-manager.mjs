@@ -98,6 +98,8 @@ export class PositionManager {
       //   单标的名义 = 权益 × 30.9%（凯利 f* = (bp-q)/b = 30.9%, 胜率56.7%盈亏比1.68）
       //   波动降权: ATR>5% 的标的仓位减半(回测+21%收益)
       //   保证金 = 名义 / 5 = 权益 × 6.2%（四仓共 24.7% 可用）
+      const price = Number(opp.price);
+      if (!price || price <= 0) continue;
       const lever = 5;
       // 波动降权: ATR>5% → 仓位减半（回测验证: 3x ETF高波动降权后收益+21%）
       let kellyW = 0.309;
@@ -154,18 +156,30 @@ export class PositionManager {
       } catch { /* 确认失败不阻塞 */ }
       // 自动开单后立即挂止损（滚仓v5: 15%距离，覆盖全量，挂好不动）
       // 避免新仓裸奔；只有自动开单才挂，已有仓位的手动止损不干预
+      // 修复(2026-08-18): 市价开仓后OKX持仓未结算, reduceOnly止损立即挂会报code 1
+      //   加延时重试: 2s后重试, 最多3次
       try {
         const slDist = 0.15; // 滚仓v5 止损 15%
         const slPx = arb.direction === 'long' ? price * (1 - slDist) : price * (1 + slDist);
-        const slResult = await this.setProtection(gateway, {
-          instId: opp.instId, side: side === 'long' ? 'sell' : 'buy',
-          slTriggerPx: Math.round(slPx * 100) / 100,
-          size: qty,
-        });
+        const slTrigger = Math.round(slPx * 100) / 100;
+        let slResult = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            slResult = await this.setProtection(gateway, {
+              instId: opp.instId, side: side === 'long' ? 'sell' : 'buy',
+              slTriggerPx: slTrigger,
+              size: qty,
+            });
+            break;
+          } catch (slErr) {
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 2000)); // 等2s重试
+            else throw slErr;
+          }
+        }
         this.pendingSlInsts.add(opp.instId); // 标记已挂，后续不再重复
         actions.push({
           action: '开仓挂止损', instId: opp.instId,
-          detail: `新仓自动挂止损 ${Math.round(slPx * 100) / 100}（${(slDist * 100).toFixed(0)}% 距离，覆盖 ${qty} 张），挂好不动`,
+          detail: `新仓自动挂止损 ${slTrigger}（15% 距离，覆盖 ${qty} 张），挂好不动`,
         });
       } catch (slErr) {
         actions.push({ action: '开仓挂止损失败', instId: opp.instId, detail: `自动挂止损失败：${slErr?.message}，请手动设置止损` });
@@ -180,6 +194,18 @@ export class PositionManager {
 
   // 主入口：由私有WS事件触发（节流）或定时器兜底
   async evaluate({ force = false } = {}) {
+    // ⚠️ 互斥锁(2026-08-18 事故): ticker/WS事件/定时器并发触发evaluate
+    //   事故: 同一秒5次开仓叠加(0.136×5=0.68张), 因无锁并发各开一单
+    if (this._evaluating) return { busy: true };
+    this._evaluating = true;
+    try {
+      return await this._evaluateInner({ force });
+    } finally {
+      this._evaluating = false;
+    }
+  }
+
+  async _evaluateInner({ force = false } = {}) {
     const now = Date.now();
     if (!force && now - this.lastRun < this.minIntervalMs) return { skipped: true };
     this.lastRun = now;
