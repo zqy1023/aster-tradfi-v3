@@ -152,17 +152,14 @@
             <section class="panel"><div class="panel-head"><h2>OKX 真实成交额 Top5</h2><span class="chip" id="opportunity-count">--</span></div><div class="panel-body"><div class="opportunity-list" id="opportunity-list"></div></div></section>
             <section class="panel"><div class="panel-head"><h2>策略仲裁与计划</h2><span class="status warn" id="arbiter-state">等待选择</span></div><div class="panel-body"><div class="decision" id="decision-panel"></div></div></section>
           </div>
-          <div class="research-grid">
-            <section class="panel"><div class="panel-head"><h2>策略管理</h2><span class="chip" id="strategy-count">6 个策略</span></div><div class="panel-body"><div id="strategy-list" class="trade-list"><div class="empty">正在加载策略…</div></div></div></section>
-            <section class="panel"><div class="panel-head"><h2>研究证据与候选</h2><span class="chip" id="research-stage">尚未运行</span></div><div class="panel-body research-output" id="research-output"><div class="empty">创建研究任务后，这里会显示八阶段进度、入场/退出规则、限制和准入状态。</div></div></section>
-          </div>
+          <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>策略管理</h2><span class="chip" id="strategy-count">2 个策略</span></div><div class="panel-body"><div id="strategy-list" class="trade-list"><div class="empty">正在加载策略…</div></div></div></section>
         </section>
 
         <section class="view" id="view-cockpit" hidden>
           <div class="workspace-head"><div class="workspace-title"><h1>行情驾驶舱</h1><p>价格、盘口、逐笔和 K 线来自 OKX；K 线使用 KLineChart v10 本地包。</p></div><div class="actions"><span class="status" id="market-source">等待行情</span><span class="status" id="latency">--</span></div></div>
           <div class="terminal-layout">
             <section class="panel"><div class="panel-head"><h2>合约池</h2><select id="asset-filter"><option value="equity">股票</option><option value="">全部</option><option value="index">指数</option><option value="fx">外汇</option><option value="metal">贵金属</option><option value="commodity">大宗商品</option></select></div><div class="panel-body" style="padding-bottom:6px"><label class="sr-only" for="instrument-search">搜索合约</label><input id="instrument-search" type="search" placeholder="搜索代码或名称" autocomplete="off"></div><div class="instrument-list" id="instrument-list"></div></section>
-            <section class="panel"><div class="panel-head"><div><h2 id="chart-title">选择合约</h2><div class="muted num" id="chart-meta">等待 OKX 数据</div></div><div class="toolbar"><div class="seg" id="timeframes"><button data-bar="1m">1m</button><button data-bar="5m">5m</button><button data-bar="15m">15m</button><button data-bar="1H">1H</button><button data-bar="4H" class="active">4H</button><button data-bar="1D">1D</button><button data-bar="1W">1W</button></div><select id="indicator-select"><option value="VOL">VOL</option><option value="MA">MA</option><option value="EMA">EMA</option><option value="BOLL">BOLL</option><option value="MACD">MACD</option><option value="RSI">RSI</option></select></div></div><div class="panel-body"><div class="kline-wrap"><div class="kline" id="kline-chart"></div><div class="chart-mask" id="chart-mask">等待历史 K 线入库</div></div><div class="quote-strip" id="quote-strip"></div></div></section>
+            <section class="panel"><div class="panel-head"><div><h2 id="chart-title">选择合约</h2><div class="muted num" id="chart-meta">等待 OKX 数据</div></div><div class="toolbar"><div class="seg" id="timeframes"><button data-bar="1m">1m</button><button data-bar="5m">5m</button><button data-bar="15m">15m</button><button data-bar="1H">1H</button><button data-bar="4H" class="active">4H</button><button data-bar="1D">1D</button><button data-bar="1W">1W</button></div><span class="chip">VOL + MA20</span></div></div><div class="panel-body"><div class="kline-wrap"><div class="kline" id="kline-chart"></div><div class="chart-mask" id="chart-mask">等待历史 K 线入库</div></div><div class="quote-strip" id="quote-strip"></div></div></section>
             <section class="panel"><div class="panel-head"><h2>订单流</h2><span class="chip">books5 / trades</span></div><div class="panel-body"><div class="book-grid"><div><h3>买盘</h3><div id="bids"></div></div><div><h3>卖盘</h3><div id="asks"></div></div></div><div class="report-section" style="margin-top:12px"><h3>逐笔成交</h3><div id="trades"></div></div><div class="report-section"><h3>数据时间</h3><div id="market-times" class="muted"></div></div></div></section>
           </div>
         </section>
@@ -205,7 +202,7 @@
   (() => {
     const $ = (q, root = document) => root.querySelector(q);
     const $$ = (q, root = document) => [...root.querySelectorAll(q)];
-    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, candleSeries: null, volSeries: null, maSeries: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
+    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, candleSeries: null, volSeries: null, maSeries: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, reviewDate: '', reviewCache: null };
     const icons = {
       radar:'<svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M12 3v3M21 12h-3M12 18v3M6 12H3"/><path d="m12 12 5-5"/></svg>',
       chart:'<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 3-4 3 2 4-7"/></svg>',
@@ -248,12 +245,16 @@
 
     function navigate(view) {
       state.view = view;
+      // 统一清理实时流：离开任何页面都关闭私有流，避免 SSE 连接泄漏
+      if (view !== 'live') { state.privateStream?.close(); state.privateStream = null; }
+      if (view !== 'opportunities') { state.overviewStream?.close(); state.overviewStream = null; }
+      if (view !== 'cockpit') { state.chartStream?.close(); state.chartStream = null; }
       $$('.view').forEach(section => { section.hidden = section.id !== `view-${view}`; });
       $$('.nav-btn').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
       if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
       if (view === 'opportunities') loadOverviewStream();
-      if (view === 'cockpit') { state.overviewStream?.close(); state.overviewStream = null; ensureChart(); loadMarketDetail().catch(err => toast(err.message)); }
-      if (view === 'live') { state.overviewStream?.close(); state.overviewStream = null; loadLive().catch(err => toast(err.message)); }
+      if (view === 'cockpit') { ensureChart(); loadMarketDetail().catch(err => toast(err.message)); }
+      if (view === 'live') loadLive().catch(err => toast(err.message));
       if (view === 'review') loadReview(state.reviewDate || '').catch(err => toast(err.message));
       if (view === 'settings') loadAccounts().catch(err => toast(err.message));
       if (matchMedia('(max-width: 860px)').matches) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -608,27 +609,6 @@
       state.privateStream = source;
     }
 
-    function renderResearch(detail = {}, events = []) {
-      const job = detail.job;
-      const candidate = detail.candidate;
-      if (!job) { $('#research-stage').textContent = '尚未运行'; return; }
-      state.researchJob = job;
-      $('#research-stage').textContent = `${job.currentStage || job.status} · ${job.progress || 0}%`;
-      const spec = candidate?.spec;
-      $('#research-output').innerHTML = `<div><strong>${esc(job.status === 'completed' ? '研究任务完成' : job.status === 'failed' ? '研究失败' : 'AI 正在研究')}</strong><div class="progress" aria-label="研究进度 ${job.progress || 0}%"><span style="transform:scaleX(${Math.max(0, Math.min(100, job.progress || 0)) / 100})"></span></div><div class="muted">${esc(job.currentStage || '--')} · ${esc(job.provider || '--')}${job.failureReason ? ` · ${esc(job.failureReason)}` : ''}</div></div>${events.length ? `<div class="report-section" style="margin-top:10px"><h3>八阶段证据</h3>${events.slice(-8).map(event => `<div class="list-row"><span>${esc(event.message)}</span><small>${new Date(event.createdAt).toLocaleTimeString('zh-CN', { hour12:false })}</small></div>`).join('')}</div>` : ''}${spec ? `<div class="report-section"><h3>${esc(spec.name)}</h3><div class="muted">${esc(spec.hypothesis)}</div><h3 style="margin-top:10px">入场规则</h3><ul>${(spec.entryRules || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul><h3 style="margin-top:10px">退出与风控</h3><ul>${[...(spec.exitRules || []), ...(spec.filters || [])].map(x => `<li>${esc(x)}</li>`).join('')}</ul><h3 style="margin-top:10px">限制</h3><ul>${(spec.limitations || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="danger-note" style="margin-top:10px">状态：${esc(candidate.status)}。没有回测、前向验证和压力测试证据时，系统禁止进入实盘。</div>${candidate.status === 'research_only' ? '<button class="btn" id="approve-paper" type="button" style="margin-top:10px">仅批准进入模拟</button>' : ''}</div>` : ''}`;
-      if ($('#approve-paper')) $('#approve-paper').onclick = async () => { const result = await api(`/api/v3/ai/research/${encodeURIComponent(job.id)}/approval`, { method:'POST', body: JSON.stringify({ decision:'paper' }) }); toast(result.message); await loadResearch(job.id); };
-    }
-
-    async function loadResearch(jobId = '') {
-      const listing = await api('/api/v3/ai/research');
-      const id = jobId || listing.jobs?.[0]?.id;
-      if (!id) { renderResearch(); return; }
-      const [detail, eventPayload] = await Promise.all([api(`/api/v3/ai/research/${encodeURIComponent(id)}`), api(`/api/v3/ai/research/${encodeURIComponent(id)}/events`)]);
-      renderResearch(detail, eventPayload.events || []);
-      clearTimeout(state.researchTimer);
-      if (['queued', 'running'].includes(detail.job.status)) state.researchTimer = setTimeout(() => loadResearch(id).catch(() => undefined), 800);
-    }
-
     async function loadReview(date = '') {
       try {
         const review = await api(`/api/v3/reviews/daily${date ? `?date=${encodeURIComponent(date)}` : ''}`);
@@ -717,7 +697,6 @@
       renderOpportunities();
       renderDecision();
       loadStrategies().catch(error => toast(error.message));
-      loadResearch().catch(error => { $('#research-output').innerHTML = `<div class="empty">研究服务不可用：${esc(error.message)}</div>`; });
       if (state.view === 'opportunities') loadOverviewStream();
       if (state.selectedInst) loadMarketDetail().catch(err => toast(err.message));
     }
@@ -755,7 +734,6 @@
     $('#asset-filter').onchange = renderInstruments;
     $('#instrument-search').oninput = renderInstruments;
     $$('#timeframes button').forEach(button => button.onclick = () => { state.selectedBar = button.dataset.bar; $$('#timeframes button').forEach(x => x.classList.toggle('active', x === button)); changeChartPeriod(button.dataset.bar); });
-    $('#indicator-select').onchange = () => toast('指标已随 K 线固定显示：VOL + MA20（Lightweight Charts）');
     $('#refresh-live').onclick = () => loadLive().catch(err => toast(err.message));
     $('#strategy-list').addEventListener('click', async event => {
       const button = event.target.closest('button[data-strategy-key][data-toggle]');
