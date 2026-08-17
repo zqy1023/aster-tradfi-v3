@@ -42,16 +42,20 @@ export class PositionManager {
     const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
     const openedThisRound = new Set(); // 本轮已开的标的（防止内存同步延迟导致重复开仓）
     const now = Date.now();
-    // —— 信号强度排序：按 12月动量收益率 + 4H动量 + 流动性 综合打分，取最强 ——
-    // 排序分 = return12m权重(50%) + 4H动量得分(30%) + 成交量(20%)
+    // —— 信号强度排序：动量排名绝对主导（用户要求取最强）——
+    // 排序分 = 动量排名分位(80%) + 4H动量得分(15%) + 成交量(5%)
+    // 修复2: 原权重60/25/15下, SNXX流动性93分(15%)反超SNDK动量99分(60%)差距
+    //        SNDK 99*0.6=59.4 vs SNXX 82*0.6=49.2 差10.2; 流动性 SNXX 14 vs SNDK 2 差12 → 反超
+    //        动量必须主导: 80%权重, 流动性仅5%(保底不主导)
     const scored = (opportunities || [])
       .map((opp) => {
         const mom = opp.momentum;
         const sm = (opp.signals || []).find((s) => s.type === 'short_momentum');
-        const momScore = mom ? Math.min(100, mom.return12m * 100) : 0;        // 12月收益率
+        // 动量排名分位: rank 1/68 → 98.5分; rank 12/68 → 82.4分
+        const momScore = mom?.rank && mom?.total ? (1 - mom.rank / mom.total) * 100 : 0;
         const h4Score = sm ? sm.score : 0;                                     // 4H动量分
         const liqScore = Math.min(100, Number(opp.volume24h || 0) / 4_000_000 * 100); // 流动性
-        const total = momScore * 0.5 + h4Score * 0.3 + liqScore * 0.2;
+        const total = momScore * 0.8 + h4Score * 0.15 + liqScore * 0.05;
         return { opp, total, momScore, h4Score };
       })
       .sort((a, b) => b.total - a.total);
