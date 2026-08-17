@@ -30,6 +30,7 @@ export class PositionManager {
     this.cooldowns = new Map();       // instId → 平仓时间戳（30分钟冷却）
     this.autoOpenEnabled = false;     // 自动开单默认关闭（安全开关）
     this.lastTrailingMove = new Map(); // instId → 上次动态止损移动时间（10分钟冷却）
+    this.pendingSlInsts = new Set();   // 本进程已挂硬止损的标的（防重复挂单）
   }
 
   // 自动开单：默认禁用！只有显式开启(AUTO_TRADE_ENABLED)才允许
@@ -41,7 +42,20 @@ export class PositionManager {
     const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
     const openedThisRound = new Set(); // 本轮已开的标的（防止内存同步延迟导致重复开仓）
     const now = Date.now();
-    for (const opp of opportunities || []) {
+    // —— 信号强度排序：按 12月动量收益率 + 4H动量 + 流动性 综合打分，取最强 ——
+    // 排序分 = return12m权重(50%) + 4H动量得分(30%) + 成交量(20%)
+    const scored = (opportunities || [])
+      .map((opp) => {
+        const mom = opp.momentum;
+        const sm = (opp.signals || []).find((s) => s.type === 'short_momentum');
+        const momScore = mom ? Math.min(100, mom.return12m * 100) : 0;        // 12月收益率
+        const h4Score = sm ? sm.score : 0;                                     // 4H动量分
+        const liqScore = Math.min(100, Number(opp.volume24h || 0) / 4_000_000 * 100); // 流动性
+        const total = momScore * 0.5 + h4Score * 0.3 + liqScore * 0.2;
+        return { opp, total, momScore, h4Score };
+      })
+      .sort((a, b) => b.total - a.total);
+    for (const { opp, total, momScore, h4Score } of scored) {
       if (held.has(opp.instId)) continue;                 // 已有持仓不开
       const cooldown = this.cooldowns.get(opp.instId);
       if (cooldown && now - cooldown < 30 * 60_000) continue; // 平仓后30分钟冷却
@@ -62,8 +76,11 @@ export class PositionManager {
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
       const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
-      // E. 硬止损距离：≤ 现价×2%（用户规则），ATR 只在 2% 内参考
-      const slPct = Math.min(0.02, Math.max(0.01, atrPct * 2)); // 止损距离 1%~2%（上限2%）
+      // E. 硬止损距离：≤ 现价×2%（用户规则）；SNDK 例外用 1%（用户指定：SNDK止损1%能开1张）
+      // 其他标的 1%~2%，SNDK 固定 1%
+      const slPct = opp.instId === 'SNDK-USDT-SWAP'
+        ? 0.01
+        : Math.min(0.02, Math.max(0.01, atrPct * 2)); // 止损距离 1%~2%（上限2%）
       const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算上限6%
       const riskUsd = equity * riskBudgetPct;
       const lossPerUnit = price * slPct;
@@ -71,7 +88,8 @@ export class PositionManager {
       // A. 风险预算约束的张数
       let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
       // B. 单笔名义上限约束：名义 ≤ 权益 × 100%（用户规则）
-      const notionalCap = equity * 1.0;
+      //    SNDK 例外：1张最小名义1735U=372%权益, 用户指定"破例放开"（最强动量+3416%）
+      const notionalCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
       let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
       // C. 保证金约束（10x 杠杆, 保证金 ≤ 可用×30%）
       const lever = 10;
@@ -80,15 +98,16 @@ export class PositionManager {
       // 取三者最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // 组合预算：已有持仓名义 + 本次 ≤ 权益×100%
+      // 组合预算：已有持仓名义 + 本次 ≤ 权益×100%（SNDK例外5倍）
+      const comboCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
           usedNotional += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0);
         }
       }
-      if (usedNotional + qty * price > equity * 1.0) {
-        const remain = Math.max(0, equity * 1.0 - usedNotional);
+      if (usedNotional + qty * price > comboCap) {
+        const remain = Math.max(0, comboCap - usedNotional);
         qty = Math.floor(remain / price / lotSz) * lotSz;
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
@@ -107,7 +126,7 @@ export class PositionManager {
       openedThisRound.add(opp.instId); // 标记本轮已开，后续标的跳过
       actions.push({
         action: '自动开仓', instId: opp.instId,
-        detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，${constraintNote}`,
+        detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，强度分${total.toFixed(0)}（12月动量${momScore.toFixed(0)} + 4H${h4Score.toFixed(0)}），${constraintNote}`,
       });
       this.cooldowns.delete(opp.instId);
     }
@@ -173,11 +192,14 @@ export class PositionManager {
         const distLiq = mark && liq ? Math.abs(mark - liq) / mark * 100 : null;
 
         // —— 规则1：硬止损 —— 只读不干预：用户手动挂的(最新conditional)优先
-        // 系统只在"完全没有硬止损"时才补一个（用户规则：硬止损 < 实际仓位2%距离）
-        if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx))) {
-          const slPx = side === 'long' ? mark * 0.98 : mark * 1.02; // 2% 距离（用户规则上限）
-          await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100 });
-          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（2% 距离，符合用户规则），如已在 App 挂过请忽略` });
+        // 系统只在"完全没有硬止损"时才补一个（用户规则：硬止损 < 实际仓位2%；SNDK用1%）
+        // 修复重复挂单: 用 pendingSlInsts 记录本进程已挂过的，避免 getAlgos 同步延迟导致重复挂
+        if (!hardSl && !positionAlgos.some((a) => Number(a.slTriggerPx)) && !this.pendingSlInsts.has(instId)) {
+          const slDistPct = instId === 'SNDK-USDT-SWAP' ? 0.99 : 0.98; // SNDK 1%距离, 其他2%
+          const slPx = side === 'long' ? mark * slDistPct : mark * (2 - slDistPct);
+          const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(slPx * 100) / 100 });
+          if (result?.[0]?.algoId) this.pendingSlInsts.add(instId); // 记录已挂，本轮不再重复
+          actions.push({ action: '挂硬止损', instId, detail: `持仓无硬止损，自动挂 ${slPx.toFixed(2)}（${instId === 'SNDK-USDT-SWAP' ? '1%' : '2%'} 距离，符合用户规则），如已在 App 挂过请忽略` });
         }
 
         // —— 规则2：保护单去重 —— 保留最新创建的（用户手动改的优先）
