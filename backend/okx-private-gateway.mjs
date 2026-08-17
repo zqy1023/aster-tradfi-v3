@@ -160,6 +160,42 @@ export class OKXPrivateGateway {
     return this.request('order', [order], intent.id);
   }
 
+  // OKX 原生移动止损（追踪止损）：价格创新高后按回撤比例触发，只减仓
+  async setTrailingStop({ instId, side = 'sell', size, callbackRatio = 0.01, activePx = null, posSide = 'net' } = {}) {
+    if (!instId || !(Number(size) > 0)) throw new Error('移动止损缺少标的或数量');
+    const algo = {
+      instId,
+      tdMode: 'cross',
+      side,
+      posSide,
+      ordType: 'move_order_stop',
+      sz: String(size),
+      callbackRatio: String(callbackRatio),
+      reduceOnly: true,
+    };
+    if (activePx) algo.activePx = String(activePx);
+    const timestamp = new Date().toISOString();
+    const body = JSON.stringify(algo);
+    const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}POST/api/v5/trade/order-algo${body}`).digest('base64');
+    const response = await this.fetchImpl(`${this.restUrl}/api/v5/trade/order-algo`, {
+      method: 'POST',
+      headers: {
+        'OK-ACCESS-KEY': this.credentials.apiKey,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': this.credentials.passphrase,
+        'content-type': 'application/json',
+        'user-agent': 'aster-tradfi-v3',
+      },
+      body,
+    });
+    const payload = await response.json();
+    if (payload.code !== '0') throw new Error(`OKX 移动止损失败：${payload.msg || payload.code}`);
+    const rejected = (payload.data || []).find((x) => x.sCode && x.sCode !== '0');
+    if (rejected) throw new Error(`OKX 移动止损失败：${rejected.sMsg || rejected.sCode}`);
+    return payload.data || [];
+  }
+
   cancelOrder(intent) {
     return this.request('cancel-order', [{ instId: intent.instId, clOrdId: intent.id.replaceAll('-', '').slice(0, 32) }], `C-${intent.id}`.slice(0, 32));
   }
