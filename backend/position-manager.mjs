@@ -228,60 +228,9 @@ export class PositionManager {
           }
         }
 
-        // —— 规则3：系统自管动态止损（实时调整，替代 OKX 黑盒 move_order_stop）——
-        // 系统跟踪持仓期间的最高价，按 ATR 自适应回调比例算触发线，用条件单实时更新
-        // 触发线只上移不下移；波动大放宽(避免被扫)、波动小收紧(锁利)
-        const peak = this.peakPrices.get(instId) || { high: mark, at: Date.now() };
-        if (mark > peak.high) { peak.high = mark; peak.at = Date.now(); this.peakPrices.set(instId, peak); }
-        // 自适应回调：1分钟级波动约 0.1-0.3%，回调取波动 × 1.2，夹在 0.3%~1.5%
-        // 用户规则: 硬止损<2%距离 → 回调上限1.5%保证止损在2%内
-        const atrPct = await this.getAtrPct(instId).catch(() => 0.003);
-        const callback = Math.min(0.015, Math.max(0.003, atrPct * 1.2));
-        // 浮盈才动态跟踪：亏损状态不动态改止损（用户纠正：亏损收窄止损=被噪音扫掉）
-        // 浮亏 → 止损固定在开仓价下方 N%（用户规则：SNDK 1%，其他 2%），不加紧给足空间
-        // 浮盈 → 用持仓期高点 × (1-回调) 上移锁利
-        const inProfit = side === 'long' ? mark > entry : mark < entry;
-        const lossStopPct = instId === 'SNDK-USDT-SWAP' ? 0.01 : 0.02; // SNDK 1%, 其他 2%
-        const triggerLine = !inProfit
-          ? (side === 'long' ? entry * (1 - lossStopPct) : entry * (1 + lossStopPct))
-          : (side === 'long' ? peak.high * (1 - callback) : peak.high * (1 + callback));
-        // 已有动态条件单（系统自管）→ 触发线只上移：至少上移 0.5% 才更新（避免微小波动高频重挂）
-        const sysTrailing = positionAlgos.find((a) => a.ordType === 'conditional' && a.algoId && (a.tag === 'sys-trailing' || this.sysTrailingIds.has(a.algoId)));
-        const nativeTrailing = positionAlgos.find((a) => a.ordType === 'move_order_stop');
-        const currentTrigger = sysTrailing ? Number(sysTrailing.slTriggerPx || 0) : 0;
-        // 阈值 0.5%（原 0.05% 太敏感：18元标的0.05%=0.009元，任何波动都触发）
-        // 且每标的 10 分钟冷却，避免 15s ticker 高频取消+重挂（churn 产生空窗和限流）
-        const lastMove = this.lastTrailingMove.get(instId) || 0;
-        const cooldownOk = Date.now() - lastMove > 10 * 60_000;
-        const shouldUpdate = side === 'long'
-          ? triggerLine > currentTrigger * 1.005 && cooldownOk
-          : triggerLine < currentTrigger * 0.995 && cooldownOk;
-        if (conv?.mult >= 2 && distLiq !== null && distLiq > 2) {
-          // 取消 OKX 原生黑盒 move_order_stop（系统接管后不依赖它）
-          if (nativeTrailing && !sysTrailing) {
-            await this.cancelAlgo(gateway, { instId, algoId: nativeTrailing.algoId });
-            actions.push({ action: '接管动态止损', instId, detail: `取消 OKX 原生 move_order_stop（黑盒），改为系统自管条件单` });
-          }
-          if (!sysTrailing) {
-            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100, size: qty });
-            const algoId = result?.[0]?.algoId;
-            if (algoId) this.sysTrailingIds.add(algoId);
-            this.lastTrailingMove.set(instId, Date.now());
-            actions.push({ action: inProfit ? '挂动态止损' : '挂固定止损', instId, detail: inProfit ? `浮盈锁定：高点 ${peak.high.toFixed(2)} × (1-回调${(callback * 100).toFixed(2)}%) = 触发 ${triggerLine.toFixed(2)}` : `浮亏保护：止损固定开仓价${side === 'long' ? '下' : '上'}方${(lossStopPct * 100).toFixed(0)}%（${triggerLine.toFixed(2)}），不加紧` });
-          } else if (shouldUpdate && inProfit) {
-            // 上移：取消旧的 + 挂新的（触发线只上移，锁住更多利润；仅浮盈时）
-            await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
-            const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100, size: qty });
-            const newId = result?.[0]?.algoId;
-            if (newId) { this.sysTrailingIds.delete(sysTrailing.algoId); this.sysTrailingIds.add(newId); }
-            this.lastTrailingMove.set(instId, Date.now());
-            actions.push({ action: '上移动态止损', instId, detail: `浮盈锁定：高点 ${peak.high.toFixed(2)} 回调${(callback * 100).toFixed(2)}% → 触发线上移 ${currentTrigger.toFixed(2)} → ${triggerLine.toFixed(2)}` });
-          }
-        } else if (sysTrailing && (conv?.mult < 2 || distLiq === null || distLiq <= 2)) {
-          await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
-          this.sysTrailingIds.delete(sysTrailing.algoId);
-          actions.push({ action: '取消动态止损', instId, detail: `方向转弱或清算过近，移除系统动态止损仅保留硬止损` });
-        }
+        // —— 规则3：动态止损 —— 已按用户要求关闭（"不要设置自动止损"）
+        // 只保留固定全仓止损（规则1/2），系统不再自动改止损
+        // （原动态上移/回调逻辑已删除，2026-08-17）
 
         // —— 规则4：仓位风险（自动减仓到目标风险，附数学理由）——
         // 触发：止损风险 > 方向上限 × 1.5 且距清算 < 8%（杠杆仓位必须有缓冲）
