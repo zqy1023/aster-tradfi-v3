@@ -85,7 +85,10 @@
     .opportunity-list{display:grid;gap:8px}
     .opp{width:100%;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;padding:9px 11px;text-align:left;display:grid;gap:7px}
     .opp:hover,.opp.active{border-color:var(--cyan);background:#1b2229}
-    .opp-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.opp-title strong{display:block;font-size:15px}.opp-title small{display:block;color:var(--muted);margin-top:3px}
+    .opp-top{display:flex;justify-content:space-between;gap:10px;align-items:center}.opp-title strong{display:block;font-size:15px}.opp-title small{display:block;color:var(--muted);margin-top:3px}
+    .opp-dir{font-size:15px;font-weight:700;padding:3px 10px;border-radius:4px;background:rgba(98,198,255,.12)}.opp-dir.green{color:var(--green);background:rgba(38,211,156,.12)}.opp-dir.red{color:var(--red);background:rgba(255,102,122,.12)}
+    .opp-price-row{display:flex;align-items:baseline;gap:10px}.opp-price-row b{font-size:20px}.opp-price-row span{font-size:12px}
+    .opp-plan .in-zone b{color:var(--cyan)}.opp-plan .in-zone span{color:var(--cyan)}
     .opp-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.opp-meta div{background:#0d1116;border:1px solid var(--line-soft);border-radius:4px;padding:6px}.opp-meta span{display:block;color:var(--faint);font-size:10px}.opp-meta b{display:block;margin-top:4px;font-weight:600}
     .score{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:conic-gradient(var(--green) calc(var(--score)*1%),#29313a 0);font-weight:700}
     .decision{display:grid;gap:10px}.decision-box{border-left:3px solid var(--cyan);background:var(--panel-2);padding:11px;border-radius:4px}.decision-box.final{border-left-color:var(--green)}.decision-box.warn{border-left-color:var(--amber)}
@@ -350,12 +353,21 @@
         }
         return `
         <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
-          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} <span class="${dirClass}">${dirText}</span></strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
+          <div class="opp-top">
+            <div class="opp-title"><strong>${esc(item.underlying)}</strong><small>${esc(item.instId)}</small></div>
+            <div class="opp-dir ${dirClass}">${dirText}</div>
+            <div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div>
+          </div>
+          <div class="opp-price-row">
+            <b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b>
+            <span class="${Number(item.change24h || 0) >= 0 ? 'green' : 'red'}">${Number(item.change24h || 0) >= 0 ? '+' : ''}${Number(item.change24h || 0).toFixed(2)}%</span>
+            <span class="muted">24h ${(Number(item.volume24h || 0) / 1000000).toFixed(1)}M</span>
+          </div>
           <div class="opp-plan">
-            <div><span>现价</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
-            <div><span>进场</span><b class="num">${entry}</b></div>
-            <div><span>止损</span><b class="num">${stop}</b></div>
-            <div><span>止盈</span><b class="num">${target}</b></div>
+            <div class="${Number(item.price) <= Number(plan.entryZone?.[1] ?? Infinity) && Number(item.price) >= Number(plan.entryZone?.[0] ?? 0) ? 'in-zone' : ''}"><span>进场</span><b class="num">${entry}</b></div>
+            <div><span>止损</span><b class="num red">${stop}</b></div>
+            <div><span>止盈1</span><b class="num green">${target}</b></div>
+            <div><span>止盈2</span><b class="num">${plan.target2 != null ? fmt(plan.target2, 4) : '—'}</b></div>
           </div>
           <div class="opp-meta" style="margin-top:4px">${momTag}${heldTag}<span class="chip">${esc(item.arbitration?.reason || item.trigger?.label || '')}</span></div>
         </button>`;
