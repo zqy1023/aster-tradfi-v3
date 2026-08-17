@@ -504,16 +504,21 @@ export class TradFiDomain {
     }
     const scoped = (values) => values.filter((item) => item.tenantId === this.tenant(principal) && allowed.has(item.accountId) && (!item.instId || this.instruments.has(item.instId)));
     const fills = scoped([...this.exchangeFills.values()]).sort((a, b) => String(b.sourceTs || b.recvTs || '').localeCompare(String(a.sourceTs || a.recvTs || ''))).slice(0, 500).map(clone);
-    // —— 30 天实盘分析：从真实成交推断 开仓/加减仓/平仓/反手 ——
+    // —— 30 天实盘分析 + 诊断：从真实成交推断 开仓/加减仓/平仓/反手，并生成问题/依据/建议 ——
     const analysis = this.buildTradeAnalysis(fills);
+    const positions = scoped([...this.positions.values()]).sort((a, b) => a.instId.localeCompare(b.instId)).map(clone);
+    const risk = await this.riskOverview(principal);
+    const diagnosis = this.diagnoseTradeBehavior(analysis, risk, positions);
     return {
       source: accounts.some((account) => account.environment === 'live' && account.status === 'connected') ? 'okx-private-ws' : 'waiting-okx-account',
       generatedAt: this.clock(),
       intents: await this.listOrders(principal),
       exchangeOrders: scoped([...this.exchangeOrders.values()]).sort((a, b) => String(b.sourceTs || b.recvTs || '').localeCompare(String(a.sourceTs || a.recvTs || ''))).slice(0, 500).map(clone),
       fills,
-      positions: scoped([...this.positions.values()]).sort((a, b) => a.instId.localeCompare(b.instId)).map(clone),
+      positions,
       analysis,
+      diagnosis,
+      risk,
     };
   }
 
@@ -592,6 +597,69 @@ export class TradFiDomain {
       totalFees: stats.fees,
       turnover: stats.turnover,
       byInst: [...stats.byInst.values()].sort((a, b) => b.turnover - a.turnover).slice(0, 10),
+    };
+  }
+
+  // 实盘诊断：从真实成交/持仓/风险数据生成「问题 → 依据 → 建议」报告（不是摆数据）
+  // 输入 buildTradeAnalysis 结果 + riskOverview 结果 + 当前持仓
+  diagnoseTradeBehavior(analysis, risk, positions) {
+    const findings = [];
+    const a = analysis?.actions || {};
+    const total = analysis?.fillCount || 0;
+    const byInst = analysis?.byInst || [];
+    const add = (level, title, detail, advice) => findings.push({ level, title, detail, advice });
+
+    if (total === 0) {
+      add('info', '暂无成交', '近 30 天没有成交，无法诊断行为', '开仓后系统会自动生成诊断。');
+      return { summary: '近 30 天无交易', findings };
+    }
+
+    // 1. 操作行为诊断
+    const addCount = a.add || 0, reduceCount = a.reduce || 0, closeCount = a.close || 0, openCount = a.open || 0, reverseCount = a.reverse || 0;
+    if (openCount && closeCount === 0) add('warn', '只开不平，仓位可能堆积', `30 天开仓 ${openCount} 次但没有一次完整平仓`, '检查是否有持仓被遗忘；持仓过久会积累资金费成本。');
+    if (openCount && closeCount > 0 && closeCount < openCount * 0.5) add('warn', '平仓偏少', `开仓 ${openCount} 次 / 平仓 ${closeCount} 次，平仓率 ${(closeCount / openCount * 100).toFixed(0)}%`, '多数开仓未走到止盈/止损，可能是过早手动砍仓或目标设太高。');
+    if (reduceCount > openCount * 2 && openCount > 0) add('warn', '加减仓过于频繁', `减仓 ${reduceCount} 次 vs 开仓 ${openCount} 次`, '频繁减仓说明持仓信心不足，容易把趋势单做成短差。');
+    if (reverseCount >= 3) add('warn', '反手次数偏多', `30 天反手 ${reverseCount} 次`, '方向判断反复，建议入场前用日线趋势过滤（如 EMA20 方向）减少反转交易。');
+    if (reverseCount === 0 && addCount && reduceCount) add('info', '操作以加减仓为主', `加仓 ${addCount} / 减仓 ${reduceCount}，无反手`, '符合趋势加仓节奏，保持。');
+
+    // 2. 集中度诊断
+    if (byInst.length === 1) add('warn', '单标的过度集中', `全部 ${total} 笔成交集中在 ${byInst[0].instId}`, '单标的敞口风险高，建议至少 2-3 个标的分散。');
+    else if (byInst.length > 1) {
+      const top = byInst[0];
+      const topShare = top ? top.turnover / (analysis?.turnover || 1) : 0;
+      if (topShare > 0.7) add('warn', '成交集中在前一标的', `${top.instId} 占成交额 ${(topShare * 100).toFixed(0)}%`, '其他标的不活跃，建议检查标的池覆盖。');
+    }
+
+    // 3. 成本诊断
+    const feeRatio = analysis?.totalFees && analysis?.turnover ? analysis.totalFees / analysis.turnover : 0;
+    if (feeRatio > 0.003) add('warn', '手续费成本偏高', `手续费 ${analysis.totalFees.toFixed(2)} USDT，占成交额 ${(feeRatio * 100).toFixed(2)}%`, '减少高频小额成交，优先用限价单吃 maker 费率。');
+    else if (feeRatio > 0 && total > 5) add('info', '成本可控', `手续费率 ${(feeRatio * 100).toFixed(3)}%`, '低于 0.3% 阈值，继续观察。');
+
+    // 4. 风险状态诊断
+    if (risk) {
+      const dd = Number(risk.drawdownPct || 0);
+      if (dd >= 15) add('bad', '接近最大回撤限制', `当前回撤 ${dd.toFixed(2)}%，限制 20%`, '系统已限制新开仓，优先管理现有仓位。');
+      else if (dd >= 10) add('warn', '回撤偏高', `当前回撤 ${dd.toFixed(2)}%`, '建议降低仓位，等待回撤收敛。');
+      const gross = Number(risk.grossExposure || 0);
+      // grossExposure = 名义敞口 / 权益（倍数，如 0.4 = 40% 名义敞口）
+      if (gross > 0.4) add('warn', '敞口超限', `总敞口 ${gross.toFixed(2)} 倍权益（名义），上限 0.4 倍`, '名义敞口远超权益，杠杆风险高，需减仓。');
+      else if (gross > 0.25) add('info', '敞口偏高', `总敞口 ${gross.toFixed(2)} 倍权益`, '接近 0.4 倍上限，留意仓位。');
+    }
+
+    // 5. 盈亏结构诊断
+    const realized = Number(risk?.todayRealized || 0), fees = Number(risk?.todayFees || 0), unreal = Number(risk?.todayUnrealized || 0);
+    const pnl = realized + fees + unreal;
+    if (total > 5) {
+      if (realized > 0 && fees < 0 && Math.abs(fees) > Math.abs(realized) * 0.5) add('warn', '盈利被手续费侵蚀', `已实现 ${realized.toFixed(2)}，手续费 -${Math.abs(fees).toFixed(2)}`, '高换手吃掉利润，降低交易频率或改挂限价。');
+      if (pnl < 0) add('warn', '今日净亏损', `今日 ${pnl.toFixed(2)} = 已实现 ${realized.toFixed(2)} + 手续费 ${fees.toFixed(2)} + 未实现 ${unreal.toFixed(2)}`, '若连续亏损达到 4% 单日限额，系统会停止新开仓。');
+      if (pnl > 0) add('info', '今日盈利', `今日 ${pnl.toFixed(2)}（已实现 ${realized.toFixed(2)} / 手续费 ${fees.toFixed(2)} / 未实现 ${unreal.toFixed(2)}）`, '保持节奏。');
+    }
+
+    const warnCount = findings.filter((f) => f.level === 'warn' || f.level === 'bad').length;
+    return {
+      summary: warnCount ? `发现 ${warnCount} 个需关注问题` : '交易行为健康，无显著问题',
+      level: warnCount >= 3 ? 'bad' : warnCount > 0 ? 'warn' : 'ok',
+      findings,
     };
   }
 

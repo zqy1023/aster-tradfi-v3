@@ -170,7 +170,7 @@
             <section class="panel"><div class="panel-head"><h2>风险中心</h2><span class="status" id="risk-state">--</span></div><div class="panel-body"><div class="metric-grid" id="risk-metrics"></div><div class="risk-ledger" id="risk-breakers" style="margin-top:10px"></div></div></section>
             <section class="panel"><div class="panel-head"><h2>当前持仓</h2><span class="chip">OKX 持仓</span></div><div class="table-wrap" id="positions"></div></section>
           </div>
-          <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>近 30 天实盘分析</h2><span class="chip">真实成交推断 · 开仓/加减仓/平仓/反手</span></div><div class="panel-body" id="trade-analysis"><div class="empty">等待成交数据生成分析</div></div></section>
+          <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>实盘诊断</h2><span class="chip">问题 · 依据 · 建议</span></div><div class="panel-body" id="trade-analysis"><div class="empty">等待成交数据生成诊断</div></div></section>
           <div class="grid two" style="margin-top:12px"><section class="panel"><div class="panel-head"><h2>活动订单</h2><span class="chip">OKX 订单</span></div><div class="table-wrap" id="exchange-orders"></div></section><section class="panel"><div class="panel-head"><h2>成交回报</h2><span class="chip">OKX 成交</span></div><div class="table-wrap" id="fills"></div></section></div>
           <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>新建订单 · 风控预检</h2><span class="status warn">硬门禁</span></div><div class="panel-body"><form id="order-form"><div class="grid equal"><div class="field"><label for="order-account">账户</label><select id="order-account"></select></div><div class="field"><label for="order-inst">合约</label><select id="order-inst"></select></div><div class="field"><label for="order-side">方向</label><select id="order-side"><option value="buy">买入/做多</option><option value="sell">卖出/做空</option></select></div></div><div class="grid equal"><div class="field"><label for="order-type">订单类型</label><select id="order-type"><option value="limit">限价</option><option value="market">市价</option></select></div><div class="field"><label for="order-size">数量（张）</label><input id="order-size" type="number" min="0" step="0.0001" value="1"></div><div class="field"><label for="order-price">价格</label><input id="order-price" type="number" min="0" step="0.0001" placeholder="市价单使用最新价预检"></div></div><div class="grid equal"><div class="field"><label for="order-stop">止损触发价</label><input id="order-stop" type="number" min="0" step="0.0001" placeholder="新开仓必填"></div><div class="field"><label for="order-target">止盈触发价</label><input id="order-target" type="number" min="0" step="0.0001" placeholder="可选"></div></div><label class="check-row" for="order-reduce-only"><input id="order-reduce-only" type="checkbox">只减仓（不增加现有敞口）</label><div class="field"><label for="order-key">幂等键</label><input id="order-key" value="plan-preview-001"></div><div class="actions"><button class="btn" type="button" id="precheck">运行预检</button><button class="btn primary" id="order-submit" type="submit" disabled>核对后提交</button></div></form><div class="decision-box warn" id="risk-check" role="status" style="margin-top:12px">尚未预检</div><div class="danger-note" id="live-mode-note" style="margin-top:12px">正在读取实盘开关；系统不实现任何提现接口。</div></div></section>
         </section>
@@ -579,7 +579,7 @@
         ['账户权益', `$${fmt(risk.equity, 2)}`, `可用 $${fmt(risk.available, 2)}`],
         ['今日盈亏', `$${signed(risk.todayPnl, 2)}`, `已实现 $${fmt(risk.todayRealized ?? 0, 2)} · 手续费 $${fmt(risk.todayFees ?? 0, 2)} · 未实现 $${fmt(risk.todayUnrealized ?? 0, 2)}`],
         ['回撤', `${fmt(risk.drawdownPct, 2)}%`, '15% 限制新开仓'],
-        ['持仓/敞口', `${risk.openPositions} / ${fmt(risk.grossExposure * 100, 2)}%`, '单策略上限 40%'],
+        ['持仓/敞口', `${risk.openPositions} 个 / ${fmt(risk.grossExposure, 2)} 倍权益`, '名义敞口上限 0.4 倍'],
       ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');
       $('#risk-breakers').innerHTML = risk.breakers.map(b => {
         const ratio = b.limit ? Math.min(100, Math.abs(Number(b.current || 0) / Number(b.limit || 1) * 100)) : (b.status === 'normal' ? 100 : 0);
@@ -648,7 +648,9 @@
       $('#private-source').textContent = p.source === 'okx-private-ws' ? 'OKX 私有 WS 已连接' : '等待 OKX 私有连接';
       $('#private-source').className = `status ${p.source === 'okx-private-ws' ? 'ok' : 'warn'}`;
       // SSE 实时推送含 risk（权益/可用/今日盈亏），直接刷新风险中心
-      if (p.risk) renderRisk(p.risk);
+      if (p.risk) { try { renderRisk(p.risk); } catch { /* 风险面板异常不阻断 */ } }
+      // 诊断优先渲染（即使后续表格渲染异常也先显示诊断）
+      try { renderTradeAnalysis(p); } catch (e) { $('#trade-analysis').innerHTML = `<div class="empty">诊断渲染异常：${esc(e.message)}</div>`; }
       const table = (rows, cols, empty) => rows.length ? `<table class="table"><thead><tr>${cols.map(c => `<th>${c[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${c[0](row)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : `<div class="empty">${empty}</div>`;
       $('#exchange-orders').innerHTML = table(p.exchangeOrders || [], [
         [o => `${esc(o.exchangeOrderId)}<div class="faint">${esc(o.clientOrderId || '')}</div>`, '订单号'],
@@ -664,27 +666,37 @@
       $('#fills').innerHTML = table(p.fills || [], [
         [x => esc(x.tradeId), '成交号'], [x => esc(x.instId), '合约'], [x => `<span class="${x.side === 'buy' ? 'green' : 'red'}">${zh(x.side)}</span>`, '方向'], [x => `${fmt(x.size, 2)} / ${fmt(x.price, 4)}`, '数量/价格'], [x => `${fmt(x.fee, 4)} ${esc(x.feeCurrency || '')}`, '手续费'], [x => x.sourceTs ? new Date(Number(x.sourceTs) || x.sourceTs).toLocaleString('zh-CN', { hour12:false }) : '--', '时间']
       ], '暂无成交回报');
-      renderTradeAnalysis(p.analysis);
     }
 
-    // 近 30 天实盘行为分析（从真实成交推断）
-    function renderTradeAnalysis(a) {
-      if (!a || !a.fillCount) { $('#trade-analysis').innerHTML = '<div class="empty">近 30 天暂无成交，无法生成行为分析</div>'; return; }
+    // 近 30 天实盘诊断：问题 → 依据 → 建议（不是摆数据）
+    function renderTradeAnalysis(p) {
+      const diag = p.diagnosis;
+      if (!diag || !diag.findings || !diag.findings.length) {
+        const a = p.analysis;
+        if (!a || !a.fillCount) { $('#trade-analysis').innerHTML = '<div class="empty">近 30 天暂无成交，无法生成诊断</div>'; return; }
+      }
+      const findings = diag?.findings || [];
+      const summary = diag?.summary || '—';
+      const level = diag?.level || 'info';
+      const levelText = { ok: '健康', warn: '需关注', bad: '高风险', info: '提示' }[level] || '提示';
+      const levelClass = level === 'ok' ? 'ok' : level === 'bad' ? 'bad' : 'warn';
+      const a = p.analysis || {};
       const acts = a.actions || {};
-      const actionChip = (n, label, color) => `<div class="metric"><span>${label}</span><strong class="num" style="color:${color}">${n}</strong><small>笔</small></div>`;
-      const turnover = a.turnover ? `$${fmt(a.turnover, 0)}` : '--';
+      const actLine = `开仓 ${acts.open ?? 0} · 加仓 ${acts.add ?? 0} · 减仓 ${acts.reduce ?? 0} · 平仓 ${acts.close ?? 0} · 反手 ${acts.reverse ?? 0}`;
       $('#trade-analysis').innerHTML = `
-        <div class="metric-grid">
-          ${actionChip(acts.open ?? 0, '开仓', 'var(--cyan)')}
-          ${actionChip(acts.add ?? 0, '加仓', '#26d39c')}
-          ${actionChip(acts.reduce ?? 0, '减仓', '#e8b64c')}
-          ${actionChip(acts.close ?? 0, '平仓', '#9aa4ae')}
-          ${actionChip(acts.reverse ?? 0, '反手', '#ff667a')}
-          <div class="metric"><span>成交笔数</span><strong class="num">${a.fillCount}</strong><small>买 ${a.buys} / 卖 ${a.sells}</small></div>
-          <div class="metric"><span>成交额</span><strong class="num">${turnover}</strong><small>30 天</small></div>
-          <div class="metric"><span>手续费</span><strong class="num">$${fmt(a.totalFees, 2)}</strong><small>已从成交扣</small></div>
+        <div class="decision-box ${level === 'bad' ? 'warn' : level === 'ok' ? 'final' : ''}" style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <h3 style="margin:0">实盘诊断 <span class="status ${levelClass}">${levelText}</span></h3>
+            <span class="chip">${summary}</span>
+          </div>
+          <div class="muted" style="margin-top:6px">${actLine} · 成交 ${a.fillCount ?? 0} 笔 · 手续费 $${fmt(a.totalFees ?? 0, 2)}</div>
         </div>
-        ${(a.byInst || []).length ? `<div class="report-section" style="margin-top:12px"><h3>分标的操作分布（按成交额排序）</h3><div class="table-wrap"><table class="table"><thead><tr><th>合约</th><th>开仓</th><th>加仓</th><th>减仓</th><th>平仓</th><th>反手</th><th>成交额</th><th>手续费</th></tr></thead><tbody>${a.byInst.map(x => `<tr><td>${esc(x.instId)}</td><td>${x.open}</td><td>${x.add}</td><td>${x.reduce}</td><td>${x.close}</td><td>${x.reverse}</td><td>$${fmt(x.turnover, 0)}</td><td>$${fmt(x.fees, 2)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+        ${findings.map(f => `
+          <div class="report-section" style="margin-top:8px;border-left:3px solid ${f.level === 'bad' ? 'var(--red)' : f.level === 'warn' ? 'var(--amber)' : 'var(--green)'};padding-left:10px">
+            <h3 style="margin:0">${f.level === 'bad' ? '🔴' : f.level === 'warn' ? '🟡' : '🟢'} ${esc(f.title)}</h3>
+            <div class="muted" style="margin-top:4px">依据：${esc(f.detail)}</div>
+            <div style="margin-top:4px;color:var(--cyan)">建议：${esc(f.advice)}</div>
+          </div>`).join('') || '<div class="empty">暂无诊断结论</div>'}`;
     }
 
     async function loadLive() {
