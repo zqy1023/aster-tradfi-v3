@@ -580,7 +580,24 @@ async function connectAccount(principal, accountId) {
   const gateway = new OKXPrivateGateway({
     accountId,
     credentials,
-    onState: (state) => domain.setAccountStatus(principal, accountId, { status: state.status === 'connected' ? 'connected' : state.status === 'disconnected' ? 'pending' : 'degraded', lastSyncAt: state.lastSyncAt, message: state.message }),
+    onState: (state) => {
+      domain.setAccountStatus(principal, accountId, { status: state.status === 'connected' ? 'connected' : state.status === 'disconnected' ? 'pending' : 'degraded', lastSyncAt: state.lastSyncAt, message: state.message });
+      // 断线兜底: WS断开时用REST reconcile拉真实账户/持仓(权益不依赖WS)
+      // 401(凭据失效)时不重试, 避免刷屏; 等用户重新配置凭据
+      if (state.status === 'disconnected' || state.status === 'degraded') {
+        if (gateway.lastAuthError !== 'invalid-credentials') {
+          gateway.reconcile().catch((e) => {
+            if (String(e?.message || '').includes('401') || String(e?.message || '').includes('50119')) {
+              gateway.lastAuthError = 'invalid-credentials';
+              domain.setAccountStatus(principal, accountId, { status: 'pending', message: 'OKX 凭据失效(401)，等待重新配置' });
+              process.stderr.write('[private-ws] OKX 凭据失效，停止重试，等待用户配置新账号\n');
+            } else {
+              process.stderr.write(`[private-ws] REST兜底reconcile失败: ${e?.message}\n`);
+            }
+          });
+        }
+      }
+    },
     onEvent: (event) => {
       try {
         domain.setAccountStatus(principal, accountId, { lastSyncAt: event.recvTs });

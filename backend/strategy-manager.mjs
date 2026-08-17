@@ -7,16 +7,16 @@
 const DEFAULT_STRATEGIES = [
   {
     key: 'momentum_select',
-    name: 'Top5月度动量组合',
+    name: 'Top5月度动量组合（已停用）',
     style: 'momentum_select',
     assetClass: 'equity',
     primaryTimeframe: '1M',
     confirmationTimeframe: '1D',
     hypothesis: '每月末按过去12个月收益排序，持有Top5，并用20日已实现波动过滤高波标的。可复算回测为年化1.4%、Sharpe0.27、最大回撤13.6%；它不是高收益策略，定位是低频、低风险、可审计的组合基准。',
-    entryRule: '月末排名Top5，且ATR/波动未超过均值1.5倍、流动性与点差合格；等权或波动目标权重，总杠杆不超过1x。',
-    exitRule: '月末调仓时跌出Top5即退出；波动飙升降至半仓；组合回撤超过15%暂停新开仓。',
-    status: 'enabled',
-    evidence: 'scripts/backtest-momentum-portfolio.mjs；2022-08至2026-07，48个月，含0.21%往返成本。',
+    entryRule: '停用。12月动量周期太长，被滚仓v5替代。',
+    exitRule: '停用。',
+    status: 'disabled',
+    evidence: '2026-08-17 用户要求短周期/高收益，12月动量弃用，改用滚仓v5(20日动量)。',
   },
   {
     key: 'vol_target',
