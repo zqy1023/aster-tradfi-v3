@@ -71,6 +71,9 @@
     .status,.chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:4px 9px;color:var(--muted);font-size:12px;white-space:nowrap}
     .status.ok{color:var(--green)}.status.warn{color:var(--amber)}.status.bad{color:var(--red)}.status.info{color:var(--cyan)}
     .grid{display:grid;gap:12px}.grid.two{grid-template-columns:minmax(0,1fr) 390px}.grid.three{grid-template-columns:320px minmax(0,1fr) 380px}.grid.equal{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .opp-layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:12px;margin-top:12px}
+    .kpi-collapse{margin-top:10px;display:grid;gap:8px}
+    .btn.link-btn{background:transparent;border:1px solid var(--line);color:var(--cyan);min-height:28px;padding:4px 10px;margin-top:8px;font-size:12px;width:auto}
     .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);min-width:0;box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
     .panel-head{min-height:44px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px}
     .panel-body{padding:12px}.tight{padding:8px 10px}
@@ -106,8 +109,8 @@
     .confirm-dialog{width:min(560px,calc(100vw - 24px));border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:7px;padding:0;box-shadow:var(--shadow)}
     .confirm-dialog::backdrop{background:rgba(0,0,0,.72)}.confirm-dialog .dialog-body{padding:14px}.confirm-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--line);padding:12px 14px}
     .confirm-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}.confirm-fact{border:1px solid var(--line-soft);background:var(--panel-2);padding:9px;border-radius:5px}.confirm-fact span{display:block;color:var(--muted);font-size:11px}.confirm-fact strong{display:block;margin-top:5px}
-    @media(max-width:1260px){.grid.three,.terminal-layout{grid-template-columns:250px minmax(0,1fr)}.grid.three>.panel:last-child,.terminal-layout>.panel:last-child{grid-column:1/-1}.grid.two,.settings-grid,.review-grid{grid-template-columns:1fr}.metric-grid{grid-template-columns:repeat(2,1fr)}}
-    @media(max-width:860px){body{overflow:auto}.app{height:auto;min-height:100dvh;display:block;padding-bottom:var(--bottom)}.topbar{position:sticky;top:0;z-index:10;grid-template-columns:1fr auto;height:auto;min-height:58px}.health-strip{grid-column:1/-1;overflow:auto;padding-bottom:8px}.shell{display:block}.sidebar{position:fixed;left:0;right:0;bottom:0;z-index:12;height:var(--bottom);display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);border-right:0;padding:6px;background:var(--shell)}.nav-caption,.nav-btn .label-secondary{display:none}.nav-btn{min-height:52px;justify-content:center;text-align:center;padding:4px}.nav-btn span:last-child{font-size:11px}.content{overflow:visible}.view{padding:12px 10px 20px}.workspace-head{flex-direction:column}.grid.three,.terminal-layout,.grid.equal,.research-grid{grid-template-columns:1fr}.instrument-list{max-height:310px}.kline-wrap{height:430px}.identity-text small,.brand small{display:none}.review-grid,.settings-grid{grid-template-columns:1fr}.next-action{align-items:flex-start;flex-direction:column}.confirm-dialog{width:100%;max-width:none;margin:auto 0 0;border-radius:7px 7px 0 0}.confirm-dialog .dialog-actions .btn{min-height:44px;flex:1}}
+    @media(max-width:1260px){.grid.three,.terminal-layout,.opp-layout{grid-template-columns:minmax(0,1fr)}.grid.three>.panel:last-child,.terminal-layout>.panel:last-child{grid-column:1/-1}.grid.two,.settings-grid,.review-grid{grid-template-columns:1fr}.metric-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:860px){body{overflow:auto}.app{height:auto;min-height:100dvh;display:block;padding-bottom:var(--bottom)}.topbar{position:sticky;top:0;z-index:10;grid-template-columns:1fr auto;height:auto;min-height:58px}.health-strip{grid-column:1/-1;overflow:auto;padding-bottom:8px}.shell{display:block}.sidebar{position:fixed;left:0;right:0;bottom:0;z-index:12;height:var(--bottom);display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);border-right:0;padding:6px;background:var(--shell)}.nav-caption,.nav-btn .label-secondary{display:none}.nav-btn{min-height:52px;justify-content:center;text-align:center;padding:4px}.nav-btn span:last-child{font-size:11px}.content{overflow:visible}.view{padding:12px 10px 20px}.workspace-head{flex-direction:column}.grid.three,.terminal-layout,.opp-layout,.grid.equal,.research-grid{grid-template-columns:1fr}.instrument-list{max-height:310px}.kline-wrap{height:430px}.identity-text small,.brand small{display:none}.review-grid,.settings-grid{grid-template-columns:1fr}.next-action{align-items:flex-start;flex-direction:column}.confirm-dialog{width:100%;max-width:none;margin:auto 0 0;border-radius:7px 7px 0 0}.confirm-dialog .dialog-actions .btn{min-height:44px;flex:1}}
     @media(max-width:430px){html,body{font-size:13px}.topbar{padding:8px 10px}.health-pill{min-height:28px;padding:4px 8px}.metric-grid,.quote-strip,.opp-meta{grid-template-columns:repeat(2,1fr)}.book-grid{grid-template-columns:1fr}.kline-wrap{height:380px}.panel-head{align-items:flex-start;flex-direction:column}.toolbar{width:100%}.seg{width:100%;display:grid;grid-template-columns:repeat(4,1fr)}.seg button{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:7px 4px}.actions{width:100%}.actions .btn{flex:1 1 120px}.login-card{padding:20px}.table{min-width:650px}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
   </style>
@@ -144,8 +147,8 @@
         <section class="view" id="view-opportunities">
           <div class="workspace-head"><div class="workspace-title"><h1>机会雷达</h1><p>按市场状态、策略证据和风控门槛筛选 OKX TradFi 美股永续合约。</p></div><div class="actions"><span class="status info" id="clock">北京时间 --</span><button class="btn" id="refresh-workstation">刷新工作台</button></div></div>
           <div class="next-action"><div><strong>当前建议动作</strong><div class="muted" id="next-action-copy">正在检查账户、行情与策略触发状态</div></div><button class="btn" id="next-action-button" type="button">查看详情</button></div>
-          <div class="grid three">
-            <section class="panel"><div class="panel-head"><h2>市场状态</h2><span class="status" id="market-regime">检查中</span></div><div class="panel-body" id="market-state"></div></section>
+          <section class="panel"><div class="panel-head"><h2>市场状态</h2><span class="status" id="market-regime">检查中</span></div><div class="panel-body"><div class="metric-grid" id="market-kpis"></div><div class="kpi-collapse" id="market-detail" hidden></div><button class="btn link-btn" id="market-toggle" type="button">展开详情</button></div></section>
+          <div class="opp-layout">
             <section class="panel"><div class="panel-head"><h2>OKX 真实成交额 Top5</h2><span class="chip" id="opportunity-count">--</span></div><div class="panel-body"><div class="opportunity-list" id="opportunity-list"></div></div></section>
             <section class="panel"><div class="panel-head"><h2>策略仲裁与计划</h2><span class="status warn" id="arbiter-state">等待选择</span></div><div class="panel-body"><div class="decision" id="decision-panel"></div></div></section>
           </div>
@@ -281,23 +284,29 @@
       $('#clock').textContent = `北京时间 ${m.beijingTime}`;
       $('#market-regime').textContent = `${m.label} · 证据完整度 ${m.confidence}%`;
       $('#market-regime').className = `status ${m.confidence >= 65 ? 'ok' : m.confidence >= 45 ? 'warn' : 'bad'}`;
-      $('#market-state').innerHTML = `
-        <div class="metric-grid">
-          <div class="metric"><span>美股时段</span><strong>${esc(m.session.label)}</strong><small>${esc(m.session.risk)}</small></div>
-          <div class="metric"><span>发现合约</span><strong>${m.breadth.discovered}</strong><small>股票池 ${m.breadth.equities} 个</small></div>
-          <div class="metric"><span>可执行机会</span><strong>${m.breadth.executable}</strong><small>需两个策略同向</small></div>
-          <div class="metric"><span>平均止损距离</span><strong>${m.breadth.avgAtrStopPct === null ? '--' : fmt(m.breadth.avgAtrStopPct, 2) + '%'}</strong><small>按 ATR 估算</small></div>
-        </div>
-        <div class="report-section" style="margin-top:10px"><h3>${esc(m.confidenceLabel || '数据证据完整度')}</h3><div class="evidence-list">${(m.confidenceBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}</div></div>
+      // 顶部 KPI 条：一眼看到关键数字
+      $('#market-kpis').innerHTML = [
+        ['美股时段', `${esc(m.session.label)}`, `${esc(m.session.risk)}`],
+        ['发现合约', `${m.breadth.discovered}`, `股票池 ${m.breadth.equities} 个`],
+        ['可执行机会', `${m.breadth.executable}`, '需两个策略同向'],
+        ['平均止损距离', m.breadth.avgAtrStopPct === null ? '--' : fmt(m.breadth.avgAtrStopPct, 2) + '%', '按 ATR 估算'],
+      ].map(x => `<div class="metric"><span>${x[0]}</span><strong class="num">${x[1]}</strong><small>${x[2]}</small></div>`).join('');
+      // 可折叠详情：趋势矩阵 + 事件与成本 + 数据健康（默认收起，避免拥挤）
+      const detail = `
+        <div class="report-section"><h3>${esc(m.confidenceLabel || '数据证据完整度')}</h3><div class="evidence-list">${(m.confidenceBasis || []).map(x => `<span>${esc(x)}</span>`).join('')}</div></div>
         <div class="report-section"><h3>大盘/个股趋势矩阵</h3>${m.trendMatrix.length ? m.trendMatrix.map(row => `<div class="list-row"><span>${esc(row.underlying)} · ${esc(row.day)} / ${esc(row.fourHour)}</span><strong>${esc(row.decision)}</strong></div>`).join('') : '<div class="empty">等待 OKX 股票合约行情</div>'}</div>
         <div class="report-section"><h3>事件与成本</h3>${m.macro.map(x => `<div class="list-row"><div><strong>${esc(x.name)}</strong><div class="muted">${esc(x.action)}</div></div><span class="status ${x.state === 'live' ? 'ok' : x.state === 'partial' ? 'warn' : 'bad'}">${esc(x.state)}</span></div>`).join('')}</div>
-        <div class="health-list">${m.dataHealth.map(item => `<div class="health-row"><i class="dot ${dotClass(item.state)}"></i><div><strong>${esc(item.source)}</strong><small>${esc(item.message)}</small></div><span class="status ${dotClass(item.state) ? 'warn' : 'ok'}">${esc(item.state)}</span></div>`).join('')}</div>`;
+        <div class="report-section"><h3>数据健康</h3>${m.dataHealth.map(item => `<div class="health-row"><i class="dot ${dotClass(item.state)}"></i><div><strong>${esc(item.source)}</strong><small>${esc(item.message)}</small></div><span class="status ${dotClass(item.state) ? 'warn' : 'ok'}">${esc(item.state)}</span></div>`).join('')}</div>`;
+      const detailEl = $('#market-detail');
+      detailEl.innerHTML = detail;
+      if (!detailEl.hidden) { /* 保持展开状态 */ }
       const accountReady = state.accounts.some(account => account.status === 'connected');
       const selected = (state.workstation.opportunities || []).find(item => item.instId === state.selectedInst) || state.workstation.selected;
       const copy = !accountReady ? '先到设置绑定并验证自己的 OKX 账户' : selected?.trigger?.blockers?.length ? `${selected.underlying}：${selected.trigger.label}；下一项：${selected.trigger.blockers[0]}` : selected?.state === '可执行' ? `${selected.underlying} 已满足双策略同向，先核对计划和风险，再进入实盘预检` : '账户和行情正常，等待候选进入明确触发区';
       $('#next-action-copy').textContent = copy;
       $('#next-action-button').textContent = !accountReady ? '去绑定账户' : selected?.state === '可执行' ? '核对计划' : '查看K线';
       $('#next-action-button').onclick = () => navigate(!accountReady ? 'settings' : selected?.state === '可执行' ? 'opportunities' : 'cockpit');
+      $('#market-toggle').onclick = () => { const el = $('#market-detail'); el.hidden = !el.hidden; $('#market-toggle').textContent = el.hidden ? '展开详情' : '收起详情'; };
     }
 
     function renderOpportunities() {
@@ -305,7 +314,7 @@
       $('#opportunity-count').textContent = `${items.length} 个候选`;
       $('#opportunity-list').innerHTML = items.length ? items.map(item => `
         <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
-          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} · ${esc(item.state)}</strong><small>${esc(item.instId)} · ${esc(item.displayName)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
+          <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} · ${esc(item.state)}</strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
           <div class="opp-meta">
             <div><span>价格</span><b class="num">${fmt(item.price, item.price < 10 ? 5 : 2)}</b></div>
             <div><span>24h</span><b class="num ${item.change24h >= 0 ? 'green' : 'red'}">${signed(item.change24h, 2, '%')}</b></div>
@@ -313,7 +322,6 @@
             <div><span>仲裁</span><b>${esc(item.arbitration.label)}</b></div>
           </div>
           <div class="trigger-line"><strong>${esc(item.trigger?.label || '等待触发计算')}</strong><span class="muted">${esc(item.trigger?.blockers?.[0] || '条件已满足')}</span></div>
-          <div class="evidence-list"><span>${esc(item.scoreLabel || '规则分')}：${esc((item.scoreBasis || []).join('；'))}</span></div>
         </button>`).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
       $$('.opp').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
     }
