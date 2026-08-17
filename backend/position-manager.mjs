@@ -35,8 +35,13 @@ export class PositionManager {
 
   // 自动开单：默认禁用！只有显式开启(AUTO_TRADE_ENABLED)才允许
   // 教训(2026-08-17): 未充分验证的仓位公式导致SNXX开39.6张大仓, 必须先人工确认
+  // 硬锁: 账号凭据失效期间(401/50119)即使开关误开也不下单
   async autoOpen({ gateway, account, opportunities, actions } = {}) {
     if (!this.autoOpenEnabled) return { disabled: true };
+    if (gateway?.lastAuthError === 'invalid-credentials') {
+      process.stderr.write('[仓位管理] 凭据失效，禁止自动开单（硬锁）\n');
+      return { locked: true };
+    }
     const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
     const available = Number(account.available || this.domain.riskSnapshots.get(account.id)?.available || equity);
     const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
