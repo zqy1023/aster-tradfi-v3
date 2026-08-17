@@ -72,6 +72,8 @@ const detailSubscriptions = new Map();
 const marketClients = new Map();
 const marketFlushTimers = new Map();
 const privateClients = new Map();
+const overviewClients = new Map();
+const overviewFlushTimers = new Map();
 
 function writeEvent(res, payload, event = 'message') {
   if (res.destroyed || res.writableEnded) return false;
@@ -151,6 +153,67 @@ function schedulePrivateBroadcast(principal) {
   privateFlushTimers.set(key, timer);
 }
 
+// —— 首页机会雷达实时推送：行情 ticker 到达时 1s 节流推送轻量快照（marketState + opportunities 摘要）——
+async function pushOverview(principal) {
+  if (!overviewClients.size) return;
+  const instruments = domain.listInstruments(principal, '');
+  const marketItems = domain.marketSnapshot(principal, '');
+  const ranked = marketItems
+    .filter((item) => item.instrument?.assetClass === 'equity' && String(item.instId).endsWith('-USDT-SWAP'))
+    .sort((a, b) => Number(b.volume24h || 0) - Number(a.volume24h || 0));
+  const selected = ranked.length ? ranked.slice(0, 12) : [];
+  const candleSets = Object.fromEntries(selected.map((item) => [item.instId, {
+    '4H': domain.getCandles(item.instId, '4H').slice(-240).map(stripCandleRaw),
+    '1D': domain.getCandles(item.instId, '1D').slice(-240).map(stripCandleRaw),
+    '1W': domain.getCandles(item.instId, '1W').slice(-240).map(stripCandleRaw),
+    default: domain.getCandles(item.instId, '15m').slice(-240).map(stripCandleRaw),
+  }]));
+  const risk = await domain.riskOverview(principal);
+  const snapshot = buildWorkstationSnapshot({
+    instruments,
+    marketItems,
+    candleSets,
+    connection: domain.connection(),
+    risk,
+    privateData: { source: 'okx-private-ws', fills: [], exchangeOrders: [], positions: [], intents: [], review: { summary: {}, attribution: [], trades: [], nextActions: [] } },
+    marketEvents: {},
+    liveTrading: process.env.OKX_TRADING_ENABLED === 'true',
+  });
+  const payload = {
+    type: 'overview',
+    generatedAt: new Date().toISOString(),
+    marketState: snapshot.marketState,
+    opportunities: snapshot.opportunities.map((item) => ({
+      instId: item.instId, underlying: item.underlying, price: item.price, change24h: item.change24h,
+      volume24h: item.volume24h, state: item.state, score: item.score, arbitration: item.arbitration?.label,
+      trigger: item.trigger, source: item.source, recvTs: item.recvTs,
+    })),
+    strategyCouncil: snapshot.strategyCouncil?.map((item) => ({ instId: item.instId, arbitration: item.arbitration, signals: item.signals?.map((s) => ({ name: s.name, status: s.status, direction: s.direction, score: s.score })) })) || [],
+  };
+  for (const [res, client] of overviewClients.entries()) {
+    if (client.backpressured) continue;
+    if (client.principal.tenantId === principal.tenantId && (client.principal.role === 'admin' || client.principal.userId === principal.userId) && !writeEvent(res, payload)) client.backpressured = true;
+  }
+}
+
+// 行情消息到达时调度机会页推送（1s 节流，所有标的合并为一次快照，按客户端 principal 分别生成）
+function scheduleOverviewPush() {
+  if (!overviewClients.size) return;
+  const uniquePrincipals = new Map();
+  for (const client of overviewClients.values()) {
+    const key = `${client.principal.tenantId}|${client.principal.userId}`;
+    if (!uniquePrincipals.has(key)) uniquePrincipals.set(key, client.principal);
+  }
+  for (const [key, principal] of uniquePrincipals.entries()) {
+    if (overviewFlushTimers.has(key)) continue;
+    const timer = setTimeout(() => {
+      overviewFlushTimers.delete(key);
+      pushOverview(principal).catch((error) => process.stderr.write(`[overview] 推送失败 ${error?.message || error}\n`));
+    }, 1_000);
+    overviewFlushTimers.set(key, timer);
+  }
+}
+
 if (liveMarketEnabled) {
   okxGateway = new OKXMarketGateway({
     url: process.env.OKX_PUBLIC_WS_URL,
@@ -158,6 +221,7 @@ if (liveMarketEnabled) {
       try {
         domain.ingestMarketMessage(message);
         scheduleMarketBroadcast(message.instId);
+        if (message.type === 'tickers') scheduleOverviewPush();
       } catch (error) {
         process.stderr.write(`[public-ws] 处理行情消息异常 ${message?.type || 'unknown'}: ${error?.stack || error}\n`);
       }
@@ -525,9 +589,20 @@ const server = createServer(async (req, res) => {
       const principal = requirePrincipal(req, res); if (!principal) return;
       const instId = url.searchParams.get('instId') || '';
       const bar = validBars.has(url.searchParams.get('bar')) ? url.searchParams.get('bar') : '15m';
-      if (!domain.instruments.has(instId)) { json(res, 404, { error: '合约不存在' }); return; }
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       res.write(': connected\n\n');
+      // scope=overview：首页机会雷达实时推送（无 instId 时）
+      if (!instId) {
+        const client = { principal, overview: true, heartbeat: null, backpressured: false, lastPushAt: 0 };
+        client.heartbeat = setInterval(() => { if (!res.destroyed && !client.backpressured && !res.write(': heartbeat\n\n')) client.backpressured = true; }, 15_000);
+        res.on('drain', () => { client.backpressured = false; });
+        overviewClients.set(res, client);
+        // 立即推一版初始数据
+        pushOverview(principal).catch((error) => writeEvent(res, { error: error.message }, 'error'));
+        req.on('close', () => { clearInterval(client.heartbeat); overviewClients.delete(res); });
+        return;
+      }
+      if (!domain.instruments.has(instId)) { json(res, 404, { error: '合约不存在' }); return; }
       const client = { principal, instId, bar, heartbeat: null, backpressured: false };
       client.heartbeat = setInterval(() => { if (!res.destroyed && !client.backpressured && !res.write(': heartbeat\n\n')) client.backpressured = true; }, 15_000);
       res.on('drain', () => { client.backpressured = false; });

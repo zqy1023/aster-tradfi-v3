@@ -202,7 +202,7 @@
   (() => {
     const $ = (q, root = document) => root.querySelector(q);
     const $$ = (q, root = document) => [...root.querySelectorAll(q)];
-    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, chartStream: null, privateStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
+    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
     const icons = {
       radar:'<svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M12 3v3M21 12h-3M12 18v3M6 12H3"/><path d="m12 12 5-5"/></svg>',
       chart:'<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 3-4 3 2 4-7"/></svg>',
@@ -250,8 +250,9 @@
       $$('.view').forEach(section => { section.hidden = section.id !== `view-${view}`; });
       $$('.nav-btn').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
       if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
-      if (view === 'cockpit') ensureChart();
-      if (view === 'live') loadLive().catch(err => toast(err.message));
+      if (view === 'opportunities') loadOverviewStream();
+      if (view === 'cockpit') { state.overviewStream?.close(); state.overviewStream = null; ensureChart(); }
+      if (view === 'live') { state.overviewStream?.close(); state.overviewStream = null; loadLive().catch(err => toast(err.message)); }
       if (view === 'review') loadReview(state.reviewDate || '').catch(err => toast(err.message));
       if (view === 'settings') loadAccounts().catch(err => toast(err.message));
       if (matchMedia('(max-width: 860px)').matches) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -578,6 +579,35 @@
       }
     }
 
+    // 首页机会雷达实时推送：SSE 订阅，行情到达即更新 marketState/机会列表/仲裁（无需手动刷新）
+    function loadOverviewStream() {
+      state.overviewStream?.close();
+      const source = new EventSource('/api/v3/markets/stream');
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload || payload.type !== 'overview' || !state.workstation) return;
+          const ws = state.workstation;
+          if (payload.marketState) {
+            ws.marketState = payload.marketState;
+            renderMarketState();
+            renderHealth();
+          }
+          if (Array.isArray(payload.opportunities) && payload.opportunities.length) {
+            // 合并实时机会摘要到现有机会列表（保留 signals/plan 等重字段）
+            const byId = new Map(payload.opportunities.map(item => [item.instId, item]));
+            ws.opportunities = (ws.opportunities || []).map(item => ({ ...item, ...(byId.get(item.instId) || {}) }));
+            ws.selected = ws.selected ? { ...ws.selected, ...(byId.get(ws.selected.instId) || {}) } : ws.selected;
+            renderOpportunities();
+            renderDecision();
+          }
+          if (Array.isArray(payload.strategyCouncil) && payload.strategyCouncil.length) ws.strategyCouncil = payload.strategyCouncil;
+        } catch { /* 忽略单条坏消息 */ }
+      };
+      source.onerror = () => { /* EventSource 自动重连 */ };
+      state.overviewStream = source;
+    }
+
     async function loadStrategies() {
       const result = await api('/api/v3/strategies');
       const strategies = result.strategies || [];
@@ -620,6 +650,7 @@
       renderDecision();
       loadStrategies().catch(error => toast(error.message));
       loadResearch().catch(error => { $('#research-output').innerHTML = `<div class="empty">研究服务不可用：${esc(error.message)}</div>`; });
+      if (state.view === 'opportunities') loadOverviewStream();
       if (state.selectedInst) loadMarketDetail().catch(err => toast(err.message));
     }
 
