@@ -159,7 +159,7 @@ function buildSignals(instrument, snapshot, candleSet) {
     ];
   }
   const atrValue = daily.atr14 || Math.max(price * 0.025, Number(instrument.tickSize || 0.01) * 20);
-  const liquidityOk = finite(snapshot?.volume24h, 0) > 0 || snapshot?.source === 'demo-snapshot';
+  const liquidityOk = finite(snapshot?.volume24h, 0) > 0;
   const adxOk = (daily.adx14 || fourHour.adx14 || 0) >= 14;
   const spreadBps = snapshot?.bid && snapshot?.ask ? (snapshot.ask - snapshot.bid) / price * 10_000 : null;
   const spreadOk = spreadBps === null || spreadBps <= 35;

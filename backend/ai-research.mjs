@@ -113,33 +113,6 @@ function normalizeCandidate(candidate, request) {
   };
 }
 
-export class MockResearchProvider {
-  name = 'mock';
-
-  async generateCandidate(request, context = {}) {
-    const instrument = context.instruments?.[0]?.instId || context.instruments?.[0] || request.assetScope[0];
-    return {
-      name: `${instrument} AI 日内趋势候选`,
-      hypothesis: `${instrument} 在高流动性交易时段出现量价扩张时，短周期趋势延续概率高于随机基线；通过盘口有效点差和波动过滤可以降低逆向选择。`,
-      style: '日内趋势 / 量价扩张',
-      entryRules: [
-        `仅在 ${request.timeframe} K 线收盘后生成信号，禁止使用未完成 K 线`,
-        '成交量分位数高于 70%，且买卖盘不平衡连续两根为正（做多）或负（做空）',
-        '入场价必须位于有效交易时段，报价延迟低于 250 ms',
-      ],
-      exitRules: [
-        '止损距离为入场波动率的 2 ATR',
-        '达到 3R 或信号反转时分批退出',
-        '交易时段结束前强制平仓，不跨日持仓',
-      ],
-      filters: ['单合约名义敞口不超过账户权益 10%', '点差超过 12 bps 时禁止开仓', '风险状态不是限制开仓或只减仓'],
-      sizing: `每笔风险上限 ${request.maxRiskBps} bps；根据合约乘数、止损距离、最小张数向下取整。`,
-      performance: { trades: null, oosSharpe: null, profitFactor: null, maxDrawdownBps: null, winRate: null },
-      limitations: ['这是研究规则样例，不是交易建议或研究结论', '必须使用 OKX TradFi 历史逐笔/盘口数据重新计算全部指标', '历史回测、样本外窗口和压力测试尚未完成'],
-    };
-  }
-}
-
 export class OpenAICompatibleResearchProvider {
   constructor({ apiKey, baseUrl = 'https://api.openai.com/v1', model = 'gpt-5' } = {}) {
     this.apiKey = apiKey;
@@ -189,12 +162,13 @@ export class InMemoryResearchRepository {
 export class AIResearchService {
   constructor({ repository, provider, instrumentCatalog, clock } = {}) {
     this.repository = repository || new InMemoryResearchRepository();
-    this.provider = provider || new MockResearchProvider();
-    this.instrumentCatalog = instrumentCatalog || { discover: async (scope) => scope }; 
+    this.provider = provider || null;
+    this.instrumentCatalog = instrumentCatalog || { discover: async (scope) => scope };
     this.clock = clock;
   }
 
   async start({ tenantId, userId, input }) {
+    if (!this.provider) throw new ResearchValidationError('AI 研究未配置：需要设置 AI_PROVIDER=openai-compatible 及对应模型参数');
     const request = validateResearchRequest(input);
     const job = {
       id: makeId('AIR', this.clock),

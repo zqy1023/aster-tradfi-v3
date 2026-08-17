@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import {
   AIResearchService,
   InMemoryResearchRepository,
-  MockResearchProvider,
   OpenAICompatibleResearchProvider,
   ResearchValidationError,
 } from './ai-research.mjs';
@@ -24,15 +23,14 @@ import { StrategyManager } from './strategy-manager.mjs';
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const webDir = join(rootDir, 'web');
 const port = Number(process.env.PORT || 4310);
-const isDemo = process.env.V3_ALLOW_DEMO === 'true';
 
 const repository = process.env.V3_DB_ENABLED === 'true'
   ? await MySQLResearchRepository.fromEnv()
   : new InMemoryResearchRepository();
 const authService = repository.pool ? new AuthService(repository.pool, process.env.V3_PROXY_AUTH_SECRET) : null;
 const provider = process.env.AI_PROVIDER === 'openai-compatible'
-  ? new OpenAICompatibleResearchProvider({ apiKey: process.env.AI_PROVIDER_API_KEY, baseUrl: process.env.AI_BASE_URL, model: process.env.AI_MODEL })
-  : new MockResearchProvider();
+  ? new OpenAICompatibleResearchProvider({ apiKey: process.env.AI_API_KEY, baseUrl: process.env.AI_BASE_URL, model: process.env.AI_MODEL })
+  : null;
 const credentialVault = process.env.V3_CREDENTIAL_KEY ? new CredentialVault(process.env.V3_CREDENTIAL_KEY) : null;
 const domainRepository = process.env.V3_DB_ENABLED === 'true' ? new MySQLTradFiRepository(repository.pool) : null;
 const liveMarketEnabled = process.env.OKX_WS_ENABLED === 'true';
@@ -64,7 +62,6 @@ const service = new AIResearchService({
     },
   },
 });
-const demoUser = { username: 'demo', displayName: 'Kevin · Demo', role: 'admin' };
 let okxGateway = null;
 let okxBusinessGateway = null;
 const accountGateways = new Map();
@@ -304,7 +301,6 @@ const candleBootstrap = new Map();
 const validBars = new Set(['1m', '5m', '15m', '1H', '4H', '1D', '1W']);
 async function ensureMarketCandles(instId, requestedBar = '15m', { background = false } = {}) {
   const bar = validBars.has(requestedBar) ? requestedBar : '15m';
-  if (isDemo && !liveMarketEnabled) return;
   const key = `${instId}|${bar}`;
   const target = Math.max(200, Math.min(300, Number(process.env.OKX_HISTORY_CANDLE_LIMIT || 1000)));
   ensureMarketSubscription(instId, bar);
@@ -478,7 +474,6 @@ function principalFrom(req) {
   const tenantId = req.headers['x-tenant-id'];
   const userId = req.headers['x-user-id'];
   const role = req.headers['x-role'];
-  if (isDemo) return { tenantId: 'demo-tenant', userId: 'demo-user', role: 'admin' };
   const suppliedSecret = String(req.headers['x-auth-secret'] || '');
   const expectedSecret = String(process.env.V3_PROXY_AUTH_SECRET || '');
   const secretValid = suppliedSecret.length > 0 && suppliedSecret.length === expectedSecret.length && timingSafeEqual(Buffer.from(suppliedSecret), Buffer.from(expectedSecret));
@@ -530,7 +525,6 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   try {
     if (url.pathname === '/api/v3/auth/login' && req.method === 'POST') {
-      if (isDemo && !authService) { json(res, 200, { user: demoUser, expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString() }); return; }
       if (!authService) { json(res, 503, { error: '认证服务未配置' }); return; }
       const input = await readJson(req);
       const username = String(input.username || '').trim();
@@ -541,21 +535,19 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/api/v3/auth/session' && req.method === 'GET') {
-      if (isDemo && !authService) { json(res, 200, { user: demoUser }); return; }
       const user = authService?.userFrom(req);
       if (!user) { json(res, 401, { error: '需要登录' }); return; }
       json(res, 200, { user });
       return;
     }
     if (url.pathname === '/api/v3/auth/logout' && req.method === 'POST') {
-      if (isDemo && !authService) { json(res, 200, { ok: true }); return; }
       authService?.logout(req);
       if (authService) res.setHeader('set-cookie', authService.clearCookie());
       json(res, 200, { ok: true });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/v3/health') {
-      json(res, 200, { service: 'aster-tradfi-v3', status: 'ok', aiProvider: provider.name, storage: repository.constructor.name, liveTrading: process.env.OKX_TRADING_ENABLED === 'true', marketGateway: domain.connection(), time: new Date().toISOString() });
+      json(res, 200, { service: 'aster-tradfi-v3', status: 'ok', aiProvider: provider?.name || 'unconfigured', storage: repository.constructor.name, liveTrading: process.env.OKX_TRADING_ENABLED === 'true', marketGateway: domain.connection(), time: new Date().toISOString() });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
@@ -575,13 +567,13 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === '/api/v3/markets/instruments' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;
-      json(res, 200, { source: domain.connection().status === 'connected' ? 'okx-ws' : 'demo-catalog', instruments: domain.listInstruments(principal, url.searchParams.get('assetClass') || '') });
+      json(res, 200, { source: 'okx-ws', instruments: domain.listInstruments(principal, url.searchParams.get('assetClass') || '') });
       return;
     }
 
     if (url.pathname === '/api/v3/markets/snapshot' && req.method === 'GET') {
       const principal = requirePrincipal(req, res); if (!principal) return;
-      json(res, 200, { source: domain.connection().status === 'connected' ? 'okx-ws' : 'demo-snapshot', connection: domain.connection(), items: domain.marketSnapshot(principal, url.searchParams.get('instId') || '') });
+      json(res, 200, { source: 'okx-ws', connection: domain.connection(), items: domain.marketSnapshot(principal, url.searchParams.get('instId') || '') });
       return;
     }
 
@@ -720,36 +712,31 @@ const server = createServer(async (req, res) => {
       }
       json(res, 201, { order, liveTrading: process.env.OKX_TRADING_ENABLED === 'true' }); return;
     }
-    const orderActionMatch = url.pathname.match(/^\/api\/v3\/orders\/([^/]+)\/(fill|cancel)$/);
-    if (orderActionMatch && req.method === 'POST') {
+    const orderCancelMatch = url.pathname.match(/^\/api\/v3\/orders\/([^/]+)\/cancel$/);
+    if (orderCancelMatch && req.method === 'POST') {
       const principal = requirePrincipal(req, res, ['admin', 'trader']); if (!principal) return;
-      const orderId = decodeURIComponent(orderActionMatch[1]);
+      const orderId = decodeURIComponent(orderCancelMatch[1]);
       let order;
-      if (orderActionMatch[2] === 'fill') {
-        if (!isDemo) { json(res, 403, { error: '模拟成交接口仅在演示环境开放' }); return; }
-        order = await domain.simulateFill(principal, orderId, Number((await readJson(req)).size || 0));
-      } else {
-        const saved = (await domain.listOrders(principal)).find((item) => item.id === orderId);
-        if (!saved) { json(res, 404, { error: '订单不存在' }); return; }
-        const account = (await domain.listAccounts(principal)).find((item) => item.id === saved.accountId);
-        if (account?.environment === 'live' && process.env.OKX_TRADING_ENABLED === 'true') {
-          const gateway = accountGateways.get(account.id);
-          if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有 WebSocket 未连接，撤单保持待确认状态' }); return; }
-          order = await domain.updateOrderStatus(principal, orderId, { status: 'cancel_pending' });
-          try {
-            const ack = await gateway.cancelOrder(order);
-            const row = ack?.data?.[0] || {};
-            if (row.sCode !== '0') {
-              order = await domain.updateOrderStatus(principal, orderId, { status: 'unknown' });
-              json(res, 422, { error: `OKX 拒绝撤单：${row.sMsg || row.sCode || '未知原因'}`, order }); return;
-            }
-            order = await domain.updateOrderStatus(principal, orderId, { status: 'cancel_pending' });
-          } catch (error) {
+      const saved = (await domain.listOrders(principal)).find((item) => item.id === orderId);
+      if (!saved) { json(res, 404, { error: '订单不存在' }); return; }
+      const account = (await domain.listAccounts(principal)).find((item) => item.id === saved.accountId);
+      if (account?.environment === 'live' && process.env.OKX_TRADING_ENABLED === 'true') {
+        const gateway = accountGateways.get(account.id);
+        if (!gateway || gateway.status !== 'connected') { json(res, 409, { error: 'OKX 私有 WebSocket 未连接，撤单保持待确认状态' }); return; }
+        order = await domain.updateOrderStatus(principal, orderId, { status: 'cancel_pending' });
+        try {
+          const ack = await gateway.cancelOrder(order);
+          const row = ack?.data?.[0] || {};
+          if (row.sCode !== '0') {
             order = await domain.updateOrderStatus(principal, orderId, { status: 'unknown' });
-            json(res, 502, { error: '撤单确认失败，状态标为待对账', order }); return;
+            json(res, 422, { error: `OKX 拒绝撤单：${row.sMsg || row.sCode || '未知原因'}`, order }); return;
           }
-        } else order = await domain.cancelIntent(principal, orderId);
-      }
+          order = await domain.updateOrderStatus(principal, orderId, { status: 'cancel_pending' });
+        } catch (error) {
+          order = await domain.updateOrderStatus(principal, orderId, { status: 'unknown' });
+          json(res, 502, { error: '撤单确认失败，状态标为待对账', order }); return;
+        }
+      } else order = await domain.cancelIntent(principal, orderId);
       if (!order) { json(res, 404, { error: '订单不存在' }); return; }
       json(res, 200, { order }); return;
     }
@@ -784,7 +771,7 @@ const server = createServer(async (req, res) => {
       const principal = requirePrincipal(req, res);
       if (!principal) return;
       const jobs = await repository.listJobs(principal.tenantId, 20);
-      json(res, 200, { provider: provider.name, jobs });
+      json(res, 200, { provider: provider?.name || 'unconfigured', jobs });
       return;
     }
 
@@ -860,7 +847,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  process.stdout.write(`Aster TradFi Workstation V3 listening on 127.0.0.1:${port} provider=${provider.name}\n`);
+  process.stdout.write(`Aster TradFi Workstation V3 listening on 127.0.0.1:${port} provider=${provider?.name || 'unconfigured'}\n`);
 });
 
 // —— 进程级异常兜底：WS 行情/私有事件或后台任务出现未捕获异常时，记录并继续运行，而不是崩溃 ——

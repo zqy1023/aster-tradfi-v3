@@ -40,15 +40,6 @@ export class TradFiDomainError extends Error {
   constructor(message, status = 400) { super(message); this.name = 'TradFiDomainError'; this.status = status; }
 }
 
-const INSTRUMENTS = [
-  { instId: 'AAPL-USDT-SWAP', displayName: 'Apple 股票相关合约', assetClass: 'equity', underlying: 'AAPL', contractSize: 1, quoteCcy: 'USDT', settleCcy: 'USDT', tickSize: 0.01, lotSize: 1, tradingHours: '美股交易时段，以 OKX 返回为准', state: 'live' },
-  { instId: 'NVDA-USDT-SWAP', displayName: 'NVIDIA 股票相关合约', assetClass: 'equity', underlying: 'NVDA', contractSize: 1, quoteCcy: 'USDT', settleCcy: 'USDT', tickSize: 0.01, lotSize: 1, tradingHours: '美股交易时段，以 OKX 返回为准', state: 'live' },
-  { instId: 'TSLA-USDT-SWAP', displayName: 'Tesla 股票相关合约', assetClass: 'equity', underlying: 'TSLA', contractSize: 1, quoteCcy: 'USDT', settleCcy: 'USDT', tickSize: 0.01, lotSize: 1, tradingHours: '美股交易时段，以 OKX 返回为准', state: 'live' },
-  { instId: 'SPX-USD-SWAP', displayName: '标普 500 指数相关合约', assetClass: 'index', underlying: 'SPX', contractSize: 1, quoteCcy: 'USD', settleCcy: 'USD', tickSize: 0.1, lotSize: 1, tradingHours: '指数交易时段，以 OKX 返回为准', state: 'live' },
-  { instId: 'EUR-USD-SWAP', displayName: '欧元美元外汇相关合约', assetClass: 'fx', underlying: 'EUR/USD', contractSize: 1000, quoteCcy: 'USD', settleCcy: 'USD', tickSize: 0.00001, lotSize: 1, tradingHours: '外汇交易时段，以 OKX 返回为准', state: 'live' },
-  { instId: 'XAU-USD-SWAP', displayName: '黄金相关合约', assetClass: 'metal', underlying: 'XAU/USD', contractSize: 1, quoteCcy: 'USD', settleCcy: 'USD', tickSize: 0.01, lotSize: 1, tradingHours: '贵金属交易时段，以 OKX 返回为准', state: 'live' },
-];
-
 const CRYPTO_BASES = new Set(['BTC','ETH','SOL','XRP','DOGE','ADA','AVAX','DOT','LINK','LTC','BCH','TRX','TON','SHIB','SUI','APT','ARB','OP','PEPE','UNI','AAVE','FIL','ETC','NEAR','ATOM']);
 const FX_CODES = new Set(['USD','EUR','JPY','GBP','CHF','AUD','NZD','CAD','CNH','HKD','SGD']);
 
@@ -79,48 +70,6 @@ export function normalizeOkxInstrument(row = {}, timestamps = {}) {
   const instId = String(row.instId || '');
   const underlying = String(row.uly || row.instFamily || instId).split('-')[0];
   return { instId, displayName: String(row.instFamily || row.uly || instId), assetClass, underlying, contractSize: Number(row.ctVal || 1), quoteCcy: String(row.quoteCcy || row.ctValCcy || row.settleCcy || 'USD'), settleCcy: String(row.settleCcy || ''), tickSize: Number(row.tickSz || 0), lotSize: Number(row.lotSz || 0), tradingHours: String(row.tradingHours || '以 OKX instruments 事件为准'), state: row.state === 'live' ? 'live' : row.state || 'unknown', source: 'okx-ws', sourceTs: timestamps.sourceTs || null, recvTs: timestamps.recvTs || new Date().toISOString(), raw: row };
-}
-
-function seededMarket(inst, index = 0) {
-  const base = { AAPL: 224.16, NVDA: 181.42, TSLA: 342.8, SPX: 6462.1, 'EUR/USD': 1.1712, 'XAU/USD': 3348.6 }[inst.underlying] || 100;
-  const drift = (index % 13 - 6) * (inst.tickSize * 1.8);
-  const last = Number((base + drift).toFixed(Math.max(2, String(inst.tickSize).split('.')[1]?.length || 2)));
-  const spread = Math.max(inst.tickSize * 2, last * 0.00018);
-  const bid = Number((last - spread / 2).toFixed(8));
-  const ask = Number((last + spread / 2).toFixed(8));
-  return { instId: inst.instId, last, bid, ask, bidSize: 142 + index * 11, askSize: 128 + index * 9, volume24h: 184000 + index * 27600, change24h: Number(((index % 7 - 3) * 0.31).toFixed(2)), source: 'demo-snapshot', sourceTs: now(), recvTs: now(), sequence: index + 1 };
-}
-
-const DEMO_BARS = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
-const BAR_MS = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1H': 3_600_000, '4H': 14_400_000, '1D': 86_400_000, '1W': 604_800_000 };
-
-function makeCandles(inst, count = 240, timeframe = '15m') {
-  const base = { AAPL: 224.16, NVDA: 181.42, TSLA: 342.8, SPX: 6462.1, 'EUR/USD': 1.1712, 'XAU/USD': 3348.6 }[inst.underlying] || 100;
-  const step = BAR_MS[timeframe] || BAR_MS['15m'];
-  return Array.from({ length: count }, (_, index) => {
-    const ts = Date.now() - (count - index) * step;
-    const wave = Math.sin(index / 3.4) * inst.tickSize * 12 + (index - count / 2) * inst.tickSize * 0.25;
-    const open = base + wave;
-    const close = open + Math.cos(index / 2.7) * inst.tickSize * 4;
-    const high = Math.max(open, close) + inst.tickSize * (2 + index % 4);
-    const low = Math.min(open, close) - inst.tickSize * (1 + index % 3);
-    return { ts, open: Number(open.toFixed(8)), high: Number(high.toFixed(8)), low: Number(low.toFixed(8)), close: Number(close.toFixed(8)), volume: 180 + index * 8, confirm: true, source: `demo-candle-${timeframe}` };
-  });
-}
-
-function demoDepth(inst, snapshot) {
-  return {
-    bids: Array.from({ length: 5 }, (_, index) => [snapshot.bid - index * inst.tickSize, Math.max(1, snapshot.bidSize - index * 17), 1]),
-    asks: Array.from({ length: 5 }, (_, index) => [snapshot.ask + index * inst.tickSize, Math.max(1, snapshot.askSize - index * 15), 1]),
-    source: 'demo-orderbook', sourceTs: now(), recvTs: now(), sequence: 0, gap: false,
-  };
-}
-
-function demoTrades(snapshot) {
-  return [
-    { tradeId: 'demo-1', ts: Date.now() - 4200, price: snapshot.last, size: 8, side: 'buy', source: 'demo-trade' },
-    { tradeId: 'demo-2', ts: Date.now() - 2100, price: snapshot.ask, size: 5, side: 'sell', source: 'demo-trade' },
-  ];
 }
 
 export function calculateRunMetrics(candles = []) {
@@ -156,19 +105,13 @@ export class TradFiDomain {
     this.clock = clock;
     this.credentialVault = credentialVault;
     this.repository = repository;
-    const initialCatalog = gateway ? [] : INSTRUMENTS;
-    this.instruments = new Map(initialCatalog.map((item) => [item.instId, { ...item, source: 'demo-catalog', sourceTs: this.clock(), recvTs: this.clock() }]));
-    this.markets = new Map(initialCatalog.map((item, index) => [item.instId, seededMarket(item, index)]));
-    this.candles = new Map(initialCatalog.flatMap((item) => DEMO_BARS.map((bar) => [`${item.instId}|${bar}`, makeCandles(item, 240, bar)])));
-    this.orderBooks = new Map(initialCatalog.map((item) => {
-      const snapshot = this.markets.get(item.instId);
-      return [item.instId, demoDepth(item, snapshot)];
-    }));
-    this.tradeTicks = new Map(initialCatalog.map((item) => [item.instId, demoTrades(this.markets.get(item.instId))]));
+    this.instruments = new Map();
+    this.markets = new Map();
+    this.candles = new Map();
+    this.orderBooks = new Map();
+    this.tradeTicks = new Map();
     this.fundingRates = new Map();
-    this.accounts = new Map([
-      ['acct-demo', { id: 'acct-demo', tenantId: 'demo-tenant', ownerUserId: 'demo-user', name: 'Kevin · OKX TradFi 模拟账户', exchange: 'OKX', environment: 'demo', status: 'connected', lastSyncAt: this.clock(), permissions: ['读取', '交易（模拟）'], credentialMasked: '已加密保存 · 不在页面展示' }],
-    ]);
+    this.accounts = new Map();
     this.runs = boundedMap(200);
     this.intents = boundedMap(1000);
     this.fills = boundedMap(1000);
@@ -177,9 +120,9 @@ export class TradFiDomain {
     this.positions = new Map();
     this.accountSnapshots = new Map();
     this.reviews = new Map();
-    this.riskSnapshots = new Map([['acct-demo', { source: 'demo-account-snapshot', equity: 25000, available: 21400, todayPnl: -184.2, drawdownPct: 3.1, openPositions: 1, grossExposure: 0.12, updatedAt: this.clock() }]]);
+    this.riskSnapshots = new Map();
     this.audit = [];
-    this.gatewayState = { status: gateway ? 'connecting' : 'demo', latencyMs: gateway ? null : 42, lastMessageAt: gateway ? null : this.clock(), subscriptions: gateway ? ['instruments:SWAP', 'instruments:FUTURES'] : ['tickers', 'books5', 'trades', ...DEMO_BARS.map((bar) => `candle${bar}`)], reconnects: 0, gapCount: 0, message: gateway ? '正在连接 OKX 公共 WebSocket' : '演示数据，未连接真实交易所' };
+    this.gatewayState = { status: gateway ? 'connecting' : 'unavailable', latencyMs: gateway ? null : null, lastMessageAt: gateway ? null : null, subscriptions: gateway ? ['instruments:SWAP', 'instruments:FUTURES'] : [], reconnects: 0, gapCount: 0, message: gateway ? '正在连接 OKX 公共 WebSocket' : '未连接行情网关，系统不可用' };
   }
 
   tenant(principal) { return String(principal?.tenantId || ''); }
@@ -367,7 +310,7 @@ export class TradFiDomain {
   }
 
   async createRun(principal, input = {}) {
-    const instId = String(input.instId || INSTRUMENTS[0].instId);
+    const instId = String(input.instId || '');
     if (!this.instruments.has(instId)) throw new TradFiDomainError('合约不存在或不在当前账户权限范围');
     const run = { id: id('RUN'), tenantId: this.tenant(principal), createdBy: principal.userId, type: input.type === 'paper' ? 'paper' : 'backtest', strategyName: String(input.strategyName || 'AI 研究候选策略').slice(0, 160), instId, timeframe: String(input.timeframe || '15m'), status: 'running', progress: 15, createdAt: this.clock(), finishedAt: null, metrics: null, notes: '所有成本按点差、手续费、成交延迟和合约乘数估算' };
     this.runs.set(run.id, run);
@@ -503,7 +446,7 @@ export class TradFiDomain {
     const projectedExposure = currentExposure + notional;
     const maxGrossExposure = equity * 0.4;
     const sourceAt = eventTime(market?.sourceTs, 0);
-    const marketFresh = String(market?.source || '').startsWith('demo-') || (String(market?.source || '').startsWith('okx-') && Date.now() - sourceAt <= 60_000);
+    const marketFresh = String(market?.source || '').startsWith('okx-') && Date.now() - sourceAt <= 60_000;
     const accountOwned = Boolean(account && account.tenantId === this.tenant(principal) && (principal.role === 'admin' || account.ownerUserId === principal.userId));
     const lotSize = Math.max(0, finite(instrument?.lotSize, 0));
     const tickSize = Math.max(0, finite(instrument?.tickSize, 0));
@@ -596,23 +539,6 @@ export class TradFiDomain {
     }
     this.intents.set(intent.id, intent);
     this.recordAudit(principal, 'order.intent_created', { orderId: intent.id, status: intent.status, idempotencyKey: key });
-    if (risk.passed && input.simulateFill) await this.simulateFill(principal, intent.id, Number(input.simulateFill));
-    return clone(intent);
-  }
-
-  async simulateFill(principal, orderId, fillSize = null) {
-    if (!this.intents.has(orderId)) await this.listOrders(principal);
-    const intent = this.intents.get(orderId);
-    if (!intent || intent.tenantId !== this.tenant(principal)) return null;
-    if (!['outbox_pending', 'sent', 'partially_filled'].includes(intent.status)) return clone(intent);
-    const amount = Math.min(intent.size - intent.filledSize, Number(fillSize || intent.size));
-    if (amount <= 0) return clone(intent);
-    const fill = { id: id('FILL'), orderId, tenantId: intent.tenantId, instId: intent.instId, side: intent.side, size: amount, price: intent.price, fee: Number((amount * intent.price * 0.0005).toFixed(6)), sourceTs: this.clock(), recvTs: this.clock() };
-    const previousValue = (intent.avgFillPrice || 0) * intent.filledSize;
-    intent.filledSize += amount; intent.avgFillPrice = Number(((previousValue + amount * fill.price) / intent.filledSize).toFixed(8)); intent.status = intent.filledSize >= intent.size ? 'filled' : 'partially_filled'; intent.exchangeOrderId = intent.exchangeOrderId || `OKX-DEMO-${intent.id}`; intent.updatedAt = this.clock();
-    if (this.repository) { await this.repository.saveFill(fill); await this.repository.updateOrderIntent(intent); }
-    this.fills.set(fill.id, fill);
-    this.recordAudit(principal, 'order.fill_received', { orderId, fillId: fill.id, filledSize: amount });
     return clone(intent);
   }
 
@@ -741,4 +667,4 @@ export class TradFiDomain {
   recordAudit(principal, type, detail) { const event = { id: id('AUD'), tenantId: this.tenant(principal), actor: principal.userId, type, detail, createdAt: this.clock() }; this.audit.push(event); if (this.audit.length > 1000) this.audit.splice(0, this.audit.length - 1000); if (this.repository) this.repository.saveAudit(event).catch(() => undefined); }
 }
 
-export { INSTRUMENTS };
+export { }; // 本模块只导出类
