@@ -221,10 +221,9 @@ export class PositionManager {
             || (side === 'long' && sig.direction === 'short')
             || (side === 'short' && sig.direction === 'long');
           if (sigInvalid) {
-            await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty });
-            this.cooldowns.set(instId, Date.now()); // 冷却30分钟
-            actions.push({ action: '信号失效平仓', instId, detail: `持仓信号已失效（仲裁 ${sig.decision}/${sig.label}，方向 ${sig.direction}），自动平 ${qty} 张` });
-            continue; // 已平仓，跳过后续规则
+            // 用户要求: 信号失效只提醒, 不平仓(2026-08-17)
+            // 原自动平仓已禁用, 推送提醒让用户决定
+            actions.push({ action: '信号失效提醒', instId, detail: `持仓信号已失效（仲裁 ${sig.decision}/${sig.label}，方向 ${sig.direction}），建议平仓，需您确认` });
           }
         }
         const lossPerUnit = hardSl ? Math.abs(entry - Number(hardSl.slTriggerPx)) : mark * 0.02;
@@ -246,66 +245,14 @@ export class PositionManager {
         // 只保留固定全仓止损（规则1/2），系统不再自动改止损
         // （原动态上移/回调逻辑已删除，2026-08-17）
 
-        // —— 规则4：仓位风险（自动减仓到目标风险，附数学理由）——
-        // 触发：止损风险 > 方向上限 × 1.5 且距清算 < 8%（杠杆仓位必须有缓冲）
-        if (curRiskPct > targetRiskPct * 1.5 && distLiq !== null && distLiq < 8) {
-          const targetQty = equity * targetRiskPct / 100 / lossPerUnit;   // 目标张数(风险=上限)
-          const reduceQty = Math.max(0, qty - targetQty);
-          if (reduceQty > 0.05) {
-            await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty: reduceQty });
-            actions.push({
-              action: '自动减仓',
-              instId,
-              detail: `止损风险 ${curRiskPct.toFixed(1)}% 超方向上限 ${targetRiskPct.toFixed(1)}% 的 1.5 倍 → 减 ${reduceQty.toFixed(2)} 张（留 ${targetQty.toFixed(2)} 张），数学：目标张数 = 权益×${targetRiskPct.toFixed(1)}% ÷ 每张止损亏损 ${lossPerUnit.toFixed(2)}`,
-            });
-          }
-        }
+        // —— 规则4：仓位风险自动减仓 —— 已禁用（用户: "你特么平我仓干你吗"）
+        // bug: 实时盯仓下检测到仓位风险超限就自动减仓, 擅自动用户仓位
+        // 用户要求: 系统绝不自动平仓/减仓, 只提醒
+        // （原自动减仓逻辑已禁用，2026-08-17）
 
-        // —— 规则5：动态止盈（v2，用户要求修正版 2026-08-17）——
-        // 1. 目标变化超过 1%（区间阈值）才更新，不再每次波动都动
-        // 2. 更新用 amend 已有止盈单，不 cancel+create（避免重复单堆积）
-        // 3. 目标 = 基础8% × 信号强度系数（4H动量/排名/仲裁）
-        const sigNow = await this.getSignal(instId).catch(() => null);
-        let h4Score = 50;
-        try {
-          const snap = await this.getOpportunities(account);
-          const oppInfo = (snap || []).find((x) => x.instId === instId);
-          h4Score = (oppInfo?.signals || []).find((s) => s.type === 'momentum_select')?.score ?? 50;
-        } catch { /* 保持默认 */ }
-        const momRank = sigNow?.momentum?.rank ?? null;
-        const momTotal = sigNow?.momentum?.total ?? 68;
-        const momFactor = momRank && momTotal ? Math.max(0.5, Math.min(2.0, 2.0 * (1 - (momRank - 1) / Math.max(1, momTotal - 1)))) : 1.0;
-        const h4Factor = 0.5 + (h4Score / 100) * 1.5;
-        const arbFactor = 1.0 + Math.max(0, Math.min(0.3, ((sigNow?.confidence || 50) - 50) / 100));
-        const strengthFactor = h4Factor * 0.4 + momFactor * 0.4 + arbFactor * 0.2;
-        const targetPct = 0.08 * strengthFactor;
-        const tpPx = side === 'long' ? mark * (1 + targetPct) : mark * (1 - targetPct);
-        const currentTp = positionAlgos.find((a) => Number(a.tpTriggerPx) > 0);
-        // 区间阈值 1%：新目标与当前挂单差 ≥1% 才 amend
-        const tpGapPct = currentTp ? Math.abs(tpPx - Number(currentTp.tpTriggerPx)) / Number(currentTp.tpTriggerPx) : 1;
-        if (conv?.mult >= 1.5 && (!currentTp || tpGapPct >= 0.01)) {
-          if (currentTp) {
-            // 更新已有止盈单（amend，不产生新单）
-            await this.amendAlgo(gateway, { instId, algoId: currentTp.algoId, tpTriggerPx: Math.round(tpPx * 100) / 100 });
-            actions.push({
-              action: '更新动态止盈', instId,
-              detail: `信号强度 ${strengthFactor.toFixed(2)} → 目标 ${(targetPct * 100).toFixed(1)}% = ${tpPx.toFixed(2)}（amend 原 ${Number(currentTp.tpTriggerPx).toFixed(2)}，变化 ${(tpGapPct * 100).toFixed(1)}% ≥1%）`,
-            });
-          } else {
-            // 无止盈单 → 新建（带用户止损保护）
-            const slNow = hardSl ? Number(hardSl.slTriggerPx) : null;
-            const result = await this.setProtection(gateway, {
-              instId, side: side === 'long' ? 'sell' : 'buy',
-              slTriggerPx: slNow || undefined,
-              tpTriggerPx: Math.round(tpPx * 100) / 100,
-              size: qty,
-            });
-            actions.push({
-              action: '挂动态止盈', instId,
-              detail: `信号强度 ${strengthFactor.toFixed(2)} → 目标 ${(targetPct * 100).toFixed(1)}% = ${tpPx.toFixed(2)}（新建，含止损 ${slNow || '沿用'}）`,
-            });
-          }
-        }
+        // —— 规则5：动态止盈 —— 已禁用（用户: "取消系统实盘权限"）
+        // 系统不再自动挂/改任何止盈单，止盈完全由用户手动设置
+        // 原动态止盈(v2: 1%阈值+amend)已整体禁用，2026-08-17
       }
 
       // 记录刚平仓的标的（冷却30分钟避免立即重开）
