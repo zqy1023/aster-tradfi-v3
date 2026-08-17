@@ -237,7 +237,13 @@ export class PositionManager {
         // 用户规则: 硬止损<2%距离 → 回调上限1.5%保证止损在2%内
         const atrPct = await this.getAtrPct(instId).catch(() => 0.003);
         const callback = Math.min(0.015, Math.max(0.003, atrPct * 1.2));
-        const triggerLine = side === 'long' ? peak.high * (1 - callback) : peak.high * (1 + callback);
+        // 浮盈才动态跟踪：亏损状态不动态改止损（用户纠正：亏损收窄止损=被噪音扫掉）
+        // 浮亏 → 止损固定在开仓价下方 2%（给足空间，不加紧）
+        // 浮盈 → 用持仓期高点 × (1-回调) 上移锁利
+        const inProfit = side === 'long' ? mark > entry : mark < entry;
+        const triggerLine = !inProfit
+          ? (side === 'long' ? entry * 0.98 : entry * 1.02) // 亏损：固定在开仓价±2%
+          : (side === 'long' ? peak.high * (1 - callback) : peak.high * (1 + callback));
         // 已有动态条件单（系统自管）→ 触发线只上移：至少上移 0.5% 才更新（避免微小波动高频重挂）
         const sysTrailing = positionAlgos.find((a) => a.ordType === 'conditional' && a.algoId && (a.tag === 'sys-trailing' || this.sysTrailingIds.has(a.algoId)));
         const nativeTrailing = positionAlgos.find((a) => a.ordType === 'move_order_stop');
@@ -260,15 +266,15 @@ export class PositionManager {
             const algoId = result?.[0]?.algoId;
             if (algoId) this.sysTrailingIds.add(algoId);
             this.lastTrailingMove.set(instId, Date.now());
-            actions.push({ action: '挂动态止损', instId, detail: `系统自管：高点 ${peak.high.toFixed(2)} × (1-回调${(callback * 100).toFixed(2)}%) = 触发 ${triggerLine.toFixed(2)}` });
-          } else if (shouldUpdate) {
-            // 上移：取消旧的 + 挂新的（触发线只上移，锁住更多利润）
+            actions.push({ action: inProfit ? '挂动态止损' : '挂固定止损', instId, detail: inProfit ? `浮盈锁定：高点 ${peak.high.toFixed(2)} × (1-回调${(callback * 100).toFixed(2)}%) = 触发 ${triggerLine.toFixed(2)}` : `浮亏保护：止损固定开仓价${side === 'long' ? '下' : '上'}方2%（${triggerLine.toFixed(2)}），不加紧` });
+          } else if (shouldUpdate && inProfit) {
+            // 上移：取消旧的 + 挂新的（触发线只上移，锁住更多利润；仅浮盈时）
             await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
             const result = await this.setProtection(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', slTriggerPx: Math.round(triggerLine * 100) / 100, size: qty });
             const newId = result?.[0]?.algoId;
             if (newId) { this.sysTrailingIds.delete(sysTrailing.algoId); this.sysTrailingIds.add(newId); }
             this.lastTrailingMove.set(instId, Date.now());
-            actions.push({ action: '上移动态止损', instId, detail: `高点 ${peak.high.toFixed(2)} 回调${(callback * 100).toFixed(2)}% → 触发线上移 ${currentTrigger.toFixed(2)} → ${triggerLine.toFixed(2)}（锁利）` });
+            actions.push({ action: '上移动态止损', instId, detail: `浮盈锁定：高点 ${peak.high.toFixed(2)} 回调${(callback * 100).toFixed(2)}% → 触发线上移 ${currentTrigger.toFixed(2)} → ${triggerLine.toFixed(2)}` });
           }
         } else if (sysTrailing && (conv?.mult < 2 || distLiq === null || distLiq <= 2)) {
           await this.cancelAlgo(gateway, { instId, algoId: sysTrailing.algoId });
