@@ -39,6 +39,7 @@ export class PositionManager {
     const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
     const available = Number(account.available || this.domain.riskSnapshots.get(account.id)?.available || equity);
     const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
+    const openedThisRound = new Set(); // 本轮已开的标的（防止内存同步延迟导致重复开仓）
     const now = Date.now();
     for (const opp of opportunities || []) {
       if (held.has(opp.instId)) continue;                 // 已有持仓不开
@@ -51,13 +52,13 @@ export class PositionManager {
       // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
       const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
       if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
-      // ===== 仓位公式 v6（用户硬性风控规则 2026-08-17）=====
+      // ===== 仓位公式 v7（用户规则定稿 2026-08-17）=====
       // 约束：
       //   A. 风险预算: 止损亏损 ≤ 2%×方向系数 权益（最多6%）
-      //   B. 名义上限: 开仓名义 ≤ 总仓位(权益) × 250%（用户规则：名义<总仓位250%）
+      //   B. 名义上限: 单笔名义 ≤ 权益 × 100%（用户指定：单笔≤100%权益，不是250%上限）
       //   C. 保证金:   按 10x 杠杆算, 保证金 ≤ 可用 × 30%
-      //   D. 单笔开仓: 每轮评估最多开一笔（用户规则：每次只能开一笔）
-      //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则：硬止损<实际仓位2%）
+      //   D. 单笔开仓: 每轮最多开一笔（用户规则）
+      //   E. 硬止损:   止损距离 ≤ 现价 × 2%（用户规则）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
       const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
@@ -69,8 +70,8 @@ export class PositionManager {
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       // A. 风险预算约束的张数
       let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
-      // B. 名义上限约束：开仓名义 ≤ 权益 × 250%（用户规则）
-      const notionalCap = equity * 2.5;
+      // B. 单笔名义上限约束：名义 ≤ 权益 × 100%（用户规则）
+      const notionalCap = equity * 1.0;
       let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
       // C. 保证金约束（10x 杠杆, 保证金 ≤ 可用×30%）
       const lever = 10;
@@ -79,22 +80,23 @@ export class PositionManager {
       // 取三者最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // 组合预算：已有持仓名义 + 本次 ≤ 权益×250%（用户规则）
+      // 组合预算：已有持仓名义 + 本次 ≤ 权益×100%
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
           usedNotional += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0);
         }
       }
-      if (usedNotional + qty * price > equity * 2.5) {
-        const remain = Math.max(0, equity * 2.5 - usedNotional);
+      if (usedNotional + qty * price > equity * 1.0) {
+        const remain = Math.max(0, equity * 1.0 - usedNotional);
         qty = Math.floor(remain / price / lotSz) * lotSz;
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
-      // D. 单笔开仓：已有持仓时本轮不再开（用户规则：每次只能开一笔）
-      if (held.size > 0) continue;
+      // D. 单笔开仓：已有持仓 或 本轮已开过 → 不再开（用户规则：每次只能开一笔）
+      // 用 openedThisRound 防止内存同步延迟导致的重复开仓（实测bug: SNXX+KORU同轮都开了）
+      if (held.size > 0 || openedThisRound.size > 0) continue;
       // 记录约束明细供理由展示
-      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义250%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损${(slPct*100).toFixed(1)}%距离)`;
+      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义100%${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${lever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益, 止损${(slPct*100).toFixed(1)}%距离)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
@@ -102,6 +104,7 @@ export class PositionManager {
         instId: opp.instId, side, orderType: 'market', size: qty, reduceOnly: false,
       };
       const result = await this.placeOrder(gateway, intent);
+      openedThisRound.add(opp.instId); // 标记本轮已开，后续标的跳过
       actions.push({
         action: '自动开仓', instId: opp.instId,
         detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，${constraintNote}`,
