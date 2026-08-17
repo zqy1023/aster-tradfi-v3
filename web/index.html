@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ASTER TradFi · 交易员工作台</title>
-  <script src="/vendor/klinecharts.min.js"></script>
+  <script src="/vendor/lightweight-charts.min.js"></script>
   <script src="/vendor/echarts.min.js"></script>
   <style>
     :root{
@@ -205,7 +205,7 @@
   (() => {
     const $ = (q, root = document) => root.querySelector(q);
     const $$ = (q, root = document) => [...root.querySelectorAll(q)];
-    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
+    const state = { view: 'opportunities', workstation: null, runtime: null, instruments: [], marketItems: [], accounts: [], selectedInst: '', selectedBar: '4H', chart: null, candleSeries: null, volSeries: null, maSeries: null, chartStream: null, privateStream: null, overviewStream: null, user: null, lastPrecheck: null, pendingOrder: null, researchJob: null, researchTimer: null, reviewDate: '', reviewCache: null };
     const icons = {
       radar:'<svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M12 3v3M21 12h-3M12 18v3M6 12H3"/><path d="m12 12 5-5"/></svg>',
       chart:'<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 3-4 3 2 4-7"/></svg>',
@@ -230,8 +230,6 @@
     };
     const toast = (message) => { const node = $('#toast'); node.textContent = message; node.hidden = false; clearTimeout(node.timer); node.timer = setTimeout(() => node.hidden = true, 3600); };
     const dotClass = (stateValue) => stateValue === 'live' || stateValue === 'connected' || stateValue === 'normal' || stateValue === 'live/partial' ? '' : stateValue === 'partial' || stateValue === 'waiting' || stateValue === 'stale' ? 'warn' : 'bad';
-    const barToPeriod = (bar) => ({ '1m': { type:'minute', span:1 }, '5m': { type:'minute', span:5 }, '15m': { type:'minute', span:15 }, '1H': { type:'hour', span:1 }, '4H': { type:'hour', span:4 }, '1D': { type:'day', span:1 }, '1W': { type:'week', span:1 } }[bar] || { type:'hour', span:4 });
-    const toKline = (candles = []) => candles.filter(c => Number.isFinite(Number(c.close))).map(c => ({ timestamp: Number(c.ts), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), volume: Number(c.volume || 0), confirm: Boolean(c.confirm) }));
 
     function showLogin(message = '') {
       document.body.dataset.auth = 'login';
@@ -254,7 +252,7 @@
       $$('.nav-btn').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
       if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
       if (view === 'opportunities') loadOverviewStream();
-      if (view === 'cockpit') { state.overviewStream?.close(); state.overviewStream = null; ensureChart(); }
+      if (view === 'cockpit') { state.overviewStream?.close(); state.overviewStream = null; ensureChart(); loadMarketDetail().catch(err => toast(err.message)); }
       if (view === 'live') { state.overviewStream?.close(); state.overviewStream = null; loadLive().catch(err => toast(err.message)); }
       if (view === 'review') loadReview(state.reviewDate || '').catch(err => toast(err.message));
       if (view === 'settings') loadAccounts().catch(err => toast(err.message));
@@ -328,7 +326,7 @@
 
     function renderDecision() {
       const item = (state.workstation.opportunities || []).find(x => x.instId === state.selectedInst) || state.workstation.selected;
-      if (!item) { $('#decision-panel').innerHTML = '<div class="empty">等待机会数据</div>'; return; }
+      if (!item || !item.arbitration || !item.arbitration.decision) { $('#decision-panel').innerHTML = '<div class="empty">等待机会数据</div>'; return; }
       const final = item.arbitration.decision.startsWith('final');
       $('#arbiter-state').textContent = item.arbitration.label;
       $('#arbiter-state').className = `status ${final ? 'ok' : item.arbitration.decision === 'watch' ? 'warn' : 'info'}`;
@@ -364,7 +362,7 @@
     }
 
     function selectInstrument(instId, { goCockpit = false } = {}) {
-      if (!instId) return;
+      if (!instId || instId === state.selectedInst && !goCockpit) return;
       state.selectedInst = instId;
       if ($('#order-inst')?.options?.length && [...$('#order-inst').options].some(option => option.value === instId)) $('#order-inst').value = instId;
       renderOpportunities();
@@ -374,61 +372,112 @@
       loadMarketDetail().catch(error => { if (error.name !== 'AbortError') toast(error.message); });
     }
 
+    // —— 图表层：TradingView Lightweight Charts（应用层驱动，图表只负责渲染）——
+    // 结构：切换标的/周期 → 应用层 fetch K线 → chart.series.setData() 喂数据
+    //       SSE 推送 → series.update() 增量更新。无库内部加载状态机，杜绝卡死。
     function ensureChart() {
-      if (state.chart || !window.klinecharts) return;
-      state.chart = window.klinecharts.init('kline-chart', {
-        timezone: 'Asia/Shanghai',
-        styles: {
-          grid: { horizontal: { color: '#20262e' }, vertical: { color: '#181e25' } },
-          candle: { bar: { upColor: '#26d39c', downColor: '#ff667a', noChangeColor: '#697481', upBorderColor: '#26d39c', downBorderColor: '#ff667a', upWickColor: '#26d39c', downWickColor: '#ff667a' }, priceMark: { last: { line: { color: '#62c6ff' }, text: { backgroundColor: '#62c6ff', color: '#071013' } } } },
-          xAxis: { tickText: { color: '#9aa4ae' }, axisLine: { color: '#2a313a' } },
-          yAxis: { tickText: { color: '#9aa4ae' }, axisLine: { color: '#2a313a' } },
-          crosshair: { horizontal: { line: { color: '#62c6ff' }, text: { backgroundColor: '#20262e' } }, vertical: { line: { color: '#62c6ff' }, text: { backgroundColor: '#20262e' } } },
-        },
+      if (!window.LightweightCharts) return;
+      if (state.chart) return state.chart;
+      state.chart = window.LightweightCharts.createChart('kline-chart', {
+        autoSize: true,
+        layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9aa4ae', fontFamily: '"SFMono-Regular",Consolas,monospace' },
+        grid: { vertLines: { color: '#181e25' }, horzLines: { color: '#181e25' } },
+        crosshair: { mode: 1, vertLine: { color: '#62c6ff', labelBackgroundColor: '#20262e' }, horzLine: { color: '#62c6ff', labelBackgroundColor: '#20262e' } },
+        rightPriceScale: { borderColor: '#2a313a' },
+        timeScale: { borderColor: '#2a313a', timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 9 },
+        localization: { locale: 'zh-CN' },
       });
-      state.chart.createIndicator('VOL', false);
-      state.chart.createIndicator('MA', true);
-      state.chart.setDataLoader({
-        getBars: async ({ callback }) => {
-          const detail = await api(`/api/v3/markets/${encodeURIComponent(state.selectedInst)}?bar=${encodeURIComponent(state.selectedBar)}`);
-          renderMarketDetail(detail);
-          callback(toKline(detail.candles), { more: false });
-        },
-        subscribeBar: ({ callback }) => {
-          state.chartStream?.close();
-          if (!state.selectedInst) return;
-          const source = new EventSource(`/api/v3/markets/stream?instId=${encodeURIComponent(state.selectedInst)}&bar=${encodeURIComponent(state.selectedBar)}`);
-          source.onmessage = event => {
-            try {
-              const detail = JSON.parse(event.data);
-              if (detail?.instrument?.instId !== state.selectedInst) return;
-              renderMarketDetail(detail);
-              const candle = toKline(detail.candles).at(-1);
-              if (candle) callback(candle);
-            } catch {}
-          };
-          source.onerror = () => { $('#market-source').textContent = '行情流重连中'; $('#market-source').className = 'status warn'; };
-          state.chartStream = source;
-        },
-        unsubscribeBar: () => { state.chartStream?.close(); state.chartStream = null; },
+      state.candleSeries = state.chart.addCandlestickSeries({
+        upColor: '#26d39c', downColor: '#ff667a', borderUpColor: '#26d39c', borderDownColor: '#ff667a',
+        wickUpColor: '#26d39c', wickDownColor: '#ff667a',
       });
+      state.volSeries = state.chart.addHistogramSeries({
+        priceFormat: { type: 'volume' }, priceScaleId: '', // overlay 副图
+        color: '#2b3a4a',
+      });
+      state.chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+      state.maSeries = state.chart.addLineSeries({ color: '#e8b64c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      return state.chart;
     }
 
-    function refreshChartData() {
+    // 拉取并渲染 K 线（应用层主动 fetch，然后喂给图表）
+    async function refreshChartData() {
       ensureChart();
-      if (!state.chart || !state.selectedInst) return;
-      const instrument = state.instruments.find(x => x.instId === state.selectedInst);
-      const precision = Number(instrument?.tickSize) < 0.01 ? 5 : 2;
-      state.chart.setSymbol({ ticker: state.selectedInst, name: instrument?.underlying || state.selectedInst, pricePrecision: precision, volumePrecision: 2 });
-      state.chart.setPeriod(barToPeriod(state.selectedBar));
+      if (!state.candleSeries || !state.selectedInst) return;
+      try { state.chartStream?.close(); } catch { /* 忽略 */ }
+      state.chartStream = null;
+      $('#chart-mask').hidden = false;
+      $('#chart-mask').textContent = '正在加载 OKX K 线';
+      const instId = state.selectedInst;
+      const bar = state.selectedBar;
+      try {
+        const detail = await api(`/api/v3/markets/${encodeURIComponent(instId)}?bar=${encodeURIComponent(bar)}`);
+        if (instId !== state.selectedInst || bar !== state.selectedBar) return; // 已切换，丢弃过期响应
+        renderMarketDetail(detail);
+        const candles = (detail.candles || []).filter(c => Number.isFinite(Number(c.close)));
+        const lcBars = candles.map(c => ({ time: Math.floor(Number(c.ts) / 1000), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close) }));
+        const vols = candles.map(c => ({ time: Math.floor(Number(c.ts) / 1000), value: Number(c.volume || 0), color: Number(c.close) >= Number(c.open) ? 'rgba(38,211,156,.35)' : 'rgba(255,102,122,.35)' }));
+        state.candleSeries.setData(lcBars);
+        if (vols.length) state.volSeries.setData(vols);
+        // MA20 主图均线
+        const ma20 = computeMA(candles, 20);
+        if (ma20.length) state.maSeries.setData(ma20);
+        state.chart.timeScale().fitContent();
+        $('#chart-mask').hidden = true;
+        subscribeChartStream(instId, bar);
+      } catch (error) {
+        if (instId === state.selectedInst) $('#chart-mask').textContent = `K线加载失败：${error.message}`;
+      }
+    }
+
+    // SSE 增量推送（应用层管理 EventSource，增量 update 喂给图表）
+    function subscribeChartStream(instId, bar) {
+      state.chartStream?.close();
+      const source = new EventSource(`/api/v3/markets/stream?instId=${encodeURIComponent(instId)}&bar=${encodeURIComponent(bar)}`);
+      source.onmessage = event => {
+        try {
+          const detail = JSON.parse(event.data);
+          if (detail?.instrument?.instId !== state.selectedInst) return;
+          renderMarketDetail(detail);
+          const candles = (detail.candles || []).filter(c => Number.isFinite(Number(c.close)));
+          const last = candles.at(-1);
+          if (!last) return;
+          const bar = { time: Math.floor(Number(last.ts) / 1000), open: Number(last.open), high: Number(last.high), low: Number(last.low), close: Number(last.close) };
+          state.candleSeries?.update(bar);
+          state.volSeries?.update({ time: bar.time, value: Number(last.volume || 0), color: Number(last.close) >= Number(last.open) ? 'rgba(38,211,156,.35)' : 'rgba(255,102,122,.35)' });
+          // 增量更新 MA20（简单重算最后 20 根）
+          const all = state.candleSeries.data() || [];
+          const recent = all.slice(-20).map(b => b.close);
+          if (recent.length >= 20) {
+            const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+            state.maSeries?.update({ time: bar.time, value: avg });
+          }
+        } catch { /* 忽略坏消息 */ }
+      };
+      source.onerror = () => { $('#market-source').textContent = '行情流重连中'; $('#market-source').className = 'status warn'; };
+      state.chartStream = source;
+    }
+
+    // 计算简单移动平均（供 MA 线）
+    function computeMA(candles, period) {
+      const out = [];
+      for (let i = period - 1; i < candles.length; i++) {
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += Number(candles[j].close);
+        out.push({ time: Math.floor(Number(candles[i].ts) / 1000), value: sum / period });
+      }
+      return out;
+    }
+
+    function changeChartPeriod(bar) {
+      state.selectedBar = bar;
+      refreshChartData().catch(err => toast(err.message));
     }
 
     async function loadMarketDetail() {
       if (!state.selectedInst) return;
       ensureChart();
-      $('#chart-mask').hidden = false;
-      $('#chart-mask').textContent = '正在加载 OKX K 线';
-      refreshChartData();
+      await refreshChartData();
     }
 
     function renderMarketDetail(detail) {
@@ -438,10 +487,11 @@
       $('#chart-mask').hidden = Boolean(detail.candles?.length);
       $('#chart-title').textContent = `${detail.instrument.underlying} · ${detail.instrument.displayName}`;
       $('#chart-meta').textContent = `${detail.instrument.instId} · ${detail.timeframe} · ${detail.candleCount ?? detail.candles?.length ?? 0} 根K线 · 乘数 ${detail.instrument.contractSize}`;
-      const sourceLabel = detail.gateway.status === 'connected' ? 'OKX 实时行情' : detail.gateway.status === 'demo' ? '演示行情（非交易所）' : '行情异常';
+      const gwStatus = detail.gateway?.status || 'unknown';
+      const sourceLabel = gwStatus === 'connected' ? 'OKX 实时行情' : gwStatus === 'demo' ? '演示行情（非交易所）' : gwStatus === 'unknown' ? '行情数据' : '行情异常';
       $('#market-source').textContent = sourceLabel;
-      $('#market-source').className = `status ${detail.gateway.status === 'connected' ? 'ok' : 'warn'}`;
-      $('#latency').textContent = detail.gateway.latencyMs !== null ? `${detail.gateway.latencyMs} ms` : '待测';
+      $('#market-source').className = `status ${gwStatus === 'connected' ? 'ok' : gwStatus === 'unknown' ? 'info' : 'warn'}`;
+      $('#latency').textContent = detail.gateway?.latencyMs != null ? `${detail.gateway.latencyMs} ms` : '待测';
       const funding = Number(detail.funding?.fundingRate);
       $('#quote-strip').innerHTML = [['最新', fmt(s.last, digits)], ['买一', fmt(s.bid, digits)], ['卖一', fmt(s.ask, digits)], ['24h变化', signed(s.change24h, 2, '%')], ['24h量', fmt(s.volume24h, 0)], ['资金费', Number.isFinite(funding) ? signed(funding * 100, 4, '%') : '--']].map(([a,b]) => `<div class="quote"><span>${a}</span><strong class="num">${b}</strong></div>`).join('');
       const rows = (side) => detail.depth?.[side]?.length ? detail.depth[side].map(x => `<div class="book-row num"><span>${fmt(x[0], digits)}</span><span>${fmt(x[1], 2)}</span></div>`).join('') : '<div class="muted">等待 books5</div>';
@@ -449,7 +499,7 @@
       $('#asks').innerHTML = rows('asks');
       $('#trades').innerHTML = detail.trades?.length ? detail.trades.slice(0, 16).map(t => `<div class="trade-row num"><span class="${t.side === 'buy' ? 'green' : 'red'}">${t.side === 'buy' ? '买' : '卖'} ${fmt(t.price, digits)}</span><span>${fmt(t.size, 2)}</span></div>`).join('') : '<div class="muted">等待 trades</div>';
       const sourceTime = detail.depth?.sourceTs || s.sourceTs;
-      $('#market-times').innerHTML = `行情时间：${sourceTime ? new Date(Number(sourceTime) || sourceTime).toLocaleString('zh-CN', { hour12:false }) : '--'}<br>盘口源：${esc(detail.depth?.source || 'waiting')}<br>K线源：${esc(detail.candles?.at(-1)?.source || 'waiting')}<br>订阅：${esc((detail.gateway.subscriptions || []).join('、'))}`;
+      $('#market-times').innerHTML = `行情时间：${sourceTime ? new Date(Number(sourceTime) || sourceTime).toLocaleString('zh-CN', { hour12:false }) : '--'}<br>盘口源：${esc(detail.depth?.source || 'waiting')}<br>K线源：${esc(detail.candles?.at(-1)?.source || 'waiting')}<br>订阅：${esc((detail.gateway?.subscriptions || []).join('、'))}`;
     }
 
     function renderRisk() {
@@ -607,8 +657,15 @@
           if (Array.isArray(payload.opportunities) && payload.opportunities.length) {
             // 合并实时机会摘要到现有机会列表（保留 signals/plan 等重字段）
             const byId = new Map(payload.opportunities.map(item => [item.instId, item]));
-            ws.opportunities = (ws.opportunities || []).map(item => ({ ...item, ...(byId.get(item.instId) || {}) }));
-            ws.selected = ws.selected ? { ...ws.selected, ...(byId.get(ws.selected.instId) || {}) } : ws.selected;
+            const merge = (item) => {
+              const live = byId.get(item.instId);
+              if (!live) return item;
+              // 只合并轻量字段，保留完整 arbitration/signals/plan 不被摘要覆盖
+              const { arbitration, signals, plan, ...rest } = live;
+              return { ...item, ...rest };
+            };
+            ws.opportunities = (ws.opportunities || []).map(merge);
+            ws.selected = ws.selected ? merge(ws.selected) : ws.selected;
             renderOpportunities();
             renderDecision();
           }
@@ -697,8 +754,8 @@
     };
     $('#asset-filter').onchange = renderInstruments;
     $('#instrument-search').oninput = renderInstruments;
-    $$('#timeframes button').forEach(button => button.onclick = () => { state.selectedBar = button.dataset.bar; $$('#timeframes button').forEach(x => x.classList.toggle('active', x === button)); refreshChartData(); });
-    $('#indicator-select').onchange = event => { ensureChart(); state.chart?.createIndicator(event.target.value, event.target.value === 'MA' || event.target.value === 'EMA' || event.target.value === 'BOLL'); };
+    $$('#timeframes button').forEach(button => button.onclick = () => { state.selectedBar = button.dataset.bar; $$('#timeframes button').forEach(x => x.classList.toggle('active', x === button)); changeChartPeriod(button.dataset.bar); });
+    $('#indicator-select').onchange = () => toast('指标已随 K 线固定显示：VOL + MA20（Lightweight Charts）');
     $('#refresh-live').onclick = () => loadLive().catch(err => toast(err.message));
     $('#strategy-list').addEventListener('click', async event => {
       const button = event.target.closest('button[data-strategy-key][data-toggle]');
