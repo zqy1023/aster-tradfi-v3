@@ -6,7 +6,7 @@
 //   4. 仓位调整：风险超上限自动减仓（数学理由），加仓需明确确认
 // 每次操作写审计日志 + 通过 onNotify 推送理由
 export class PositionManager {
-  constructor({ domain, getGateway, getAlgos, setProtection, setTrailing, cancelAlgo, reducePosition, placeOrder, conviction, getAtrPct = async () => 0.003, getOpportunities = async () => [], getLotSz = async () => 0.01, clock = () => new Date(), onNotify = () => {} } = {}) {
+  constructor({ domain, getGateway, getAlgos, setProtection, setTrailing, cancelAlgo, reducePosition, placeOrder, conviction, getAtrPct = async () => 0.003, getOpportunities = async () => [], getLotSz = async () => 0.01, getSignal = async () => null, getH4Momentum = async () => null, clock = () => new Date(), onNotify = () => {} } = {}) {
     this.domain = domain;
     this.getGateway = getGateway;
     this.getAlgos = getAlgos;
@@ -19,6 +19,8 @@ export class PositionManager {
     this.getAtrPct = getAtrPct;
     this.getOpportunities = getOpportunities;
     this.getLotSz = getLotSz;
+    this.getSignal = getSignal;
+    this.getH4Momentum = getH4Momentum;
     this.clock = clock;
     this.onNotify = onNotify;
     this.lastRun = 0;
@@ -37,15 +39,6 @@ export class PositionManager {
     const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
     const available = Number(account.available || this.domain.riskSnapshots.get(account.id)?.available || equity);
     const held = new Set([...this.domain.positions.values()].filter((p) => p.accountId === account.id && Number(p.quantity) !== 0).map((p) => p.instId));
-    // —— 组合保证金预算：已有持仓保证金 + 新开 ≤ 权益×40% ——
-    let usedMargin = 0;
-    for (const p of this.domain.positions.values()) {
-      if (p.accountId === account.id && Number(p.quantity) !== 0) {
-        usedMargin += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0) / Math.max(1, Number(p.leverage || 10));
-      }
-    }
-    const budget = equity * 0.4;                    // 组合总预算 40% 权益
-    const perInstCap = equity * 0.15;               // 单标的上限 15% 权益
     const now = Date.now();
     for (const opp of opportunities || []) {
       if (held.has(opp.instId)) continue;                 // 已有持仓不开
@@ -58,39 +51,48 @@ export class PositionManager {
       // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
       const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
       if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
-      // 仓位计算：风险预算 = 2% × 方向系数；止损 = 2×ATR 距离
+      // ===== 仓位公式 v3（用户硬性风控规则）=====
+      // 约束：
+      //   A. 风险预算: 止损亏损 ≤ 2%×方向系数 权益（最多6%）
+      //   B. 名义上限: 名义金额 ≤ 权益 × 300%（用户规则：名义不能大于权益3倍）
+      //   C. 保证金:   保证金 ≤ 可用 × 30%（留足安全垫）
+      //   D. 单笔开仓: 每轮评估最多开一笔（用户规则：每次只能开一笔）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
       const atrPct = await this.getAtrPct(opp.instId).catch(() => 0.02);
       const slPct = Math.min(0.05, Math.max(0.015, atrPct * 2)); // 止损距离 1.5%~5%
-      const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算 2%×系数, 上限6%
+      const riskBudgetPct = Math.min(0.06, 0.02 * conv.mult);    // 风险预算上限6%
       const riskUsd = equity * riskBudgetPct;
       const lossPerUnit = price * slPct;
-      let qty = Math.floor(riskUsd / lossPerUnit * 100) / 100;    // 向下取整到0.01
-      // 按 OKX lotSz 取整（SNXX lotSz=0.1, KORU/SNDK=1 等）
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
-      qty = Math.floor(qty / lotSz) * lotSz;
+      // A. 风险预算约束的张数
+      let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
+      // B. 名义上限约束（用户规则：名义 ≤ 权益×3）
+      const notionalCap = equity * 3.0;
+      let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
+      // C. 保证金约束（杠杆 10x，保证金 ≤ 可用×30%）
+      const lever = 10;
+      const marginCap = available * 0.3;
+      let qtyC = Math.floor(marginCap * lever / price / lotSz) * lotSz;
+      // 取三者最小
+      let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // —— 保证金三重约束：单标的上限 / 组合预算 / 可用余额 ——
-      const lever = 10; // 自动开仓用 10x（保守，避免50x爆仓风险）
-      let margin = qty * price / lever;
-      // 1) 单标的上限：保证金 ≤ 权益×15%
-      if (margin > perInstCap) {
-        qty = Math.floor(perInstCap * lever / price / lotSz) * lotSz;
-        margin = qty * price / lever;
+      // 组合预算：已有持仓名义 + 本次 ≤ 权益×3（用户规则）
+      let usedNotional = 0;
+      for (const p of this.domain.positions.values()) {
+        if (p.accountId === account.id && Number(p.quantity) !== 0) {
+          usedNotional += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0);
+        }
       }
-      // 2) 组合预算：已有保证金 + 本次 ≤ 权益×40%
-      if (usedMargin + margin > budget) {
-        const remain = Math.max(0, budget - usedMargin);
-        qty = Math.floor(remain * lever / price / lotSz) * lotSz;
-        margin = qty * price / lever;
-      }
-      // 3) 可用余额：保证金 ≤ 可用 × 50%（留安全垫）
-      if (margin > available * 0.5) {
-        qty = Math.floor(available * 0.5 * lever / price / lotSz) * lotSz;
-        margin = qty * price / lever;
+      if (usedNotional + qty * price > equity * 3.0) {
+        const remain = Math.max(0, equity * 3.0 - usedNotional);
+        qty = Math.floor(remain / price / lotSz) * lotSz;
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
+      // D. 单笔开仓：已有持仓时本轮不再开（用户规则：每次只能开一笔）
+      if (held.size > 0) continue;
+      // 记录约束明细供理由展示
+      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义上限${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张 → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
@@ -98,10 +100,9 @@ export class PositionManager {
         instId: opp.instId, side, orderType: 'market', size: qty, reduceOnly: false,
       };
       const result = await this.placeOrder(gateway, intent);
-      usedMargin += margin; // 更新组合占用
       actions.push({
         action: '自动开仓', instId: opp.instId,
-        detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，保证金 ${margin.toFixed(1)}U（组合占用 ${usedMargin.toFixed(1)}/${budget.toFixed(1)}U 上限），风险预算 ${riskBudgetPct.toFixed(1)}%权益(${riskUsd.toFixed(1)}U)`,
+        detail: `信号 ${arb.label}（${conv.level} ×${conv.mult}）→ 开 ${qty} 张 @${price.toFixed(2)}，${constraintNote}`,
       });
       this.cooldowns.delete(opp.instId);
     }
@@ -138,6 +139,29 @@ export class PositionManager {
         const trailing = positionAlgos.find((a) => a.ordType === 'move_order_stop' || Number(a.callbackRatio) > 0);
         const conv = this.conviction(instId);
         const equity = Number(this.domain.riskSnapshots.get(account.id)?.equity || 0);
+        // —— 持仓持续评估：信号是否仍生效（开仓后不能不管）——
+        // 每次评估拉最新信号，失效则自动平仓（附理由）
+        const sig = await this.getSignal(instId).catch(() => null);
+        if (sig) {
+          const sigInvalid = sig.decision === 'neutral' || sig.decision === 'wait'
+            || (side === 'long' && sig.direction === 'short')
+            || (side === 'short' && sig.direction === 'long');
+          if (sigInvalid) {
+            await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty });
+            this.cooldowns.set(instId, Date.now()); // 冷却30分钟
+            actions.push({ action: '信号失效平仓', instId, detail: `持仓信号已失效（仲裁 ${sig.decision}/${sig.label}，方向 ${sig.direction}），自动平 ${qty} 张` });
+            continue; // 已平仓，跳过后续规则
+          }
+        }
+        // —— 4H 动量转负检测（short_momentum 退出规则）——
+        // 持仓期间 30 根 4H 动量转负 → 趋势破坏，自动平仓
+        const h4Mom = await this.getH4Momentum(instId).catch(() => null);
+        if (h4Mom !== null && h4Mom < 0) {
+          await this.reducePosition(gateway, { instId, side: side === 'long' ? 'sell' : 'buy', qty });
+          this.cooldowns.set(instId, Date.now());
+          actions.push({ action: '动量转负平仓', instId, detail: `30根4H动量转负（${(h4Mom * 100).toFixed(2)}%），趋势破坏，自动平 ${qty} 张` });
+          continue;
+        }
         const lossPerUnit = hardSl ? Math.abs(entry - Number(hardSl.slTriggerPx)) : mark * 0.02;
         const curRiskPct = equity ? (lossPerUnit * qty) / equity * 100 : 0;
         const targetRiskPct = 2 * (conv?.mult || 1);

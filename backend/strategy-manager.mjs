@@ -15,7 +15,7 @@ const DEFAULT_STRATEGIES = [
     hypothesis: '每月末按过去12个月收益率对全市场美股永续排序，做多动量最强的 Top3-5 并持有到下月。横截面动量是学术最稳健的因子之一，回测年化 73%、Sharpe 1.42（美股5年代理数据）。',
     entryRule: '每月末：过去12月收益率 Top3-5 标的，次月首个交易日开盘等权买入',
     exitRule: '月末重新排序换仓；跌破 20 日 EMA 或周线 Donchian55 下沿提前退出',
-    status: 'enabled',
+    status: 'disabled',
     evidence: '2021-08~2026-08 美股12标的代理: 年化73.2% Sharpe 1.42, 仅2022年-18%(详见 docs/FACTOR_RESEARCH_20260817.md)',
   },
   {
@@ -28,7 +28,7 @@ const DEFAULT_STRATEGIES = [
     hypothesis: '用 ATR14% 预测未来波动率（预测 IC 0.28-0.41，分年度稳定），高波动时自动减仓、低波动时满仓，把组合波动压到目标水平。回测 Sharpe 0.414→0.559、回撤 64.7%→36.8%。',
     entryRule: '仓位 = 目标年化波动30% / 当前ATR14%年化预测；波动飙升时(财报/宏观前)提示减仓',
     exitRule: '每日按最新预测波动调整仓位；ATR% > 均值1.5倍时强制降至半仓',
-    status: 'enabled',
+    status: 'disabled',
     evidence: '波动率预测 IC 分年度全正; VolTarget 10/12标的Sharpe提升(详见 docs/FACTOR_RESEARCH_20260817.md)',
   },
   {
@@ -41,7 +41,7 @@ const DEFAULT_STRATEGIES = [
     hypothesis: 'OKX 4H 真实数据回测(2026-07~08, 40天)：30根4H动量(≈5日涨幅)≥1%时做多，持有8根(≈1.3天)，10x杠杆。257笔净+62.5% 胜率65%，三标的全正(KORU+16/SNDK+14/SNXX+32)，成本0.09%→0.2%不敏感。样本短(40天)，按规则接近度上线。',
     entryRule: '4H收盘：过去30根动量(涨幅)≥1% → 下一根开盘做多；杠杆≤10x',
     exitRule: '持有8根4H或止损(4H ATR×1.5)或动量转负提前退出；单标的手续费约束：月换手≤20次',
-    status: 'disabled',
+    status: 'enabled',
     evidence: 'OKX 4H回测257笔净+62.5% 胜率65% PF1.24(2026-07~08真实数据, 样本短待积累)',
   },
 ];

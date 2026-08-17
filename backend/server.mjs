@@ -87,6 +87,21 @@ const positionManager = new PositionManager({
       return (snapshot.opportunities || []).filter((o) => o.arbitration?.decision?.startsWith('final'));
     } finally { clearTimeout(timer); }
   },
+  // 单个标的当前信号（持仓持续评估用）：从最近快照取该标的仲裁
+  getSignal: async (instId) => {
+    const principal = { tenantId: '1', userId: '1', role: 'admin' };
+    const snapshot = await buildWorkstation(principal).catch(() => null);
+    const opp = (snapshot?.opportunities || []).find((o) => o.instId === instId);
+    return opp ? { decision: opp.arbitration?.decision, direction: opp.arbitration?.direction, label: opp.arbitration?.label } : null;
+  },
+  // 4H 动量（持仓退出检测）：30根4H收盘涨跌幅
+  getH4Momentum: async (instId) => {
+    const candles = domain.getCandles(instId, '4H').filter((c) => c.confirm !== false);
+    if (candles.length < 31) return null;
+    const start = Number(candles[candles.length - 31].close);
+    const end = Number(candles[candles.length - 1].close);
+    return start > 0 ? (end - start) / start : null;
+  },
   conviction: convictionFor,
   // ATR 波动率：从 1D 已确认 K 线算 ATR14 / 现价（百分比）
   getAtrPct: async (instId) => {
