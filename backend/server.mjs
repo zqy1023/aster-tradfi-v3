@@ -205,7 +205,8 @@ async function pushOverview(principal) {
   }
 }
 
-// 行情消息到达时调度机会页推送（1s 节流，所有标的合并为一次快照，按客户端 principal 分别生成）
+// 行情消息到达时调度机会页推送（300ms 节流，所有标的合并为一次快照，按客户端 principal 分别生成）
+// 前端合约列表已改为增量更新价格文本（非整表重绘），可承受更高频率
 function scheduleOverviewPush() {
   if (!overviewClients.size) return;
   const uniquePrincipals = new Map();
@@ -218,7 +219,7 @@ function scheduleOverviewPush() {
     const timer = setTimeout(() => {
       overviewFlushTimers.delete(key);
       pushOverview(principal).catch((error) => process.stderr.write(`[overview] 推送失败 ${error?.message || error}\n`));
-    }, 1_000);
+    }, 300);
     overviewFlushTimers.set(key, timer);
   }
 }
