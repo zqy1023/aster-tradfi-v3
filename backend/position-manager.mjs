@@ -30,6 +30,7 @@ export class PositionManager {
     this.peakPrices = new Map();      // instId → {high, at} 持仓期间最高价（动态止损已弃用，保留结构）
     this.cooldowns = new Map();       // instId → 平仓时间戳（30分钟冷却）
     this.autoOpenEnabled = false;     // 自动开单默认关闭（安全开关）
+    this.allowAutoReduce = false;     // 自动减仓通道锁定（2026-08-18 事故后永false，除非用户明确授权）
     this.pendingSlInsts = new Set();  // 本进程已挂硬止损的标的（防重复挂单）
   }
 

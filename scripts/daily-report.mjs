@@ -19,7 +19,9 @@ const positions = orders.positions || [];
 const equity = orders.risk?.equity || 0;
 const todayPnl = orders.risk?.todayPnl ?? 0;
 const accountPending = orders.risk?.source === 'waiting-account-ws' || orders.risk?.source === 'pending';
-const fills = (orders.fills || []).filter((f) => f.sourceTs?.startsWith(new Date().toISOString().slice(0, 10)));
+// 北京时间"今日"（用户要求: 所有展示用UTC+8; UTC凌晨会把昨天算成今天）
+const bjToday = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+const fills = (orders.fills || []).filter((f) => f.sourceTs?.startsWith(bjToday));
 
 const lines = [];
 lines.push(`📊 实盘日报 · ${new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}`);

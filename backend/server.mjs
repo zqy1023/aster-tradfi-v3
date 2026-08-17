@@ -63,7 +63,13 @@ const positionManager = new PositionManager({
   amendAlgo: (gateway, params) => gateway.amendAlgo(params),
   cancelAlgo: (gateway, params) => gateway.cancelAlgo(params),
   // 减仓执行：市价只减仓单（通过 REST order 通道，reduceOnly）
+  // ⚠️ 安全锁(2026-08-18): 规则4自动减仓已删, 此通道默认拒绝
+  //   只有显式设置 positionManager.allowAutoReduce=true 才执行(当前永false)
   reducePosition: async (gateway, { instId, side, qty }) => {
+    if (!positionManager.allowAutoReduce) {
+      process.stderr.write(`[仓位管理] 减仓通道已锁定(allowAutoReduce=false)，拒绝自动平仓 ${instId} ${qty}张\n`);
+      return { ok: false, error: '自动减仓通道已禁用' };
+    }
     const intent = {
       id: `MGR${Date.now()}${Math.random().toString(36).slice(2, 8)}`,
       instId, side, orderType: 'market', size: qty, reduceOnly: true,
