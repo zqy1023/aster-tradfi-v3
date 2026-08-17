@@ -60,6 +60,7 @@ const positionManager = new PositionManager({
   getGateway: (accountId) => accountGateways.get(accountId),
   getAlgos: (gateway) => gateway.listPendingAlgos('SWAP'),
   setProtection: (gateway, params) => gateway.setPositionProtection(params),
+  amendAlgo: (gateway, params) => gateway.amendAlgo(params),
   cancelAlgo: (gateway, params) => gateway.cancelAlgo(params),
   // 减仓执行：市价只减仓单（通过 REST order 通道，reduceOnly）
   reducePosition: async (gateway, { instId, side, qty }) => {
@@ -91,7 +92,14 @@ const positionManager = new PositionManager({
     const principal = { tenantId: '1', userId: '1', role: 'admin' };
     const snapshot = await buildWorkstation(principal).catch(() => null);
     const opp = (snapshot?.opportunities || []).find((o) => o.instId === instId);
-    return opp ? { decision: opp.arbitration?.decision, direction: opp.arbitration?.direction, label: opp.arbitration?.label } : null;
+    return opp ? {
+      decision: opp.arbitration?.decision,
+      direction: opp.arbitration?.direction,
+      label: opp.arbitration?.label,
+      confidence: opp.arbitration?.confidence,
+      momentum: opp.momentum,
+      signals: opp.signals,
+    } : null;
   },
   // 4H 动量（持仓退出检测）：30根4H收盘涨跌幅
   getH4Momentum: async (instId) => {

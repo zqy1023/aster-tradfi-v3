@@ -224,6 +224,34 @@ export class OKXPrivateGateway {
     return payload.data || [];
   }
 
+  // 修改已有算法单（amend-algos）：更新止盈/止损价，不产生新单
+  // params: { instId, algoId, slTriggerPx?, tpTriggerPx? }
+  async amendAlgo({ instId, algoId, slTriggerPx = null, tpTriggerPx = null } = {}) {
+    if (!instId || !algoId) throw new Error('修改算法单缺少 instId/algoId');
+    const amend = { instId, algoId };
+    if (slTriggerPx) Object.assign(amend, { newSlTriggerPx: String(slTriggerPx), newSlOrdPx: '-1' });
+    if (tpTriggerPx) Object.assign(amend, { newTpTriggerPx: String(tpTriggerPx), newTpOrdPx: '-1' });
+    const body = JSON.stringify(amend);
+    const timestamp = new Date().toISOString();
+    const sign = createHmac('sha256', this.credentials.secretKey).update(`${timestamp}POST/api/v5/trade/amend-algos${body}`).digest('base64');
+    const response = await this.fetchImpl(`${this.restUrl}/api/v5/trade/amend-algos`, {
+      method: 'POST',
+      headers: {
+        'OK-ACCESS-KEY': this.credentials.apiKey,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': this.credentials.passphrase,
+        'content-type': 'application/json',
+        'user-agent': 'aster-tradfi-v3',
+      },
+      body,
+      signal: AbortSignal.timeout(12_000),
+    });
+    const payload = await response.json();
+    if (payload.code !== '0') throw new Error(`OKX 修改算法单失败：${payload.msg || payload.code} ${(payload.data || []).map((d) => `${d.sCode}:${d.sMsg}`).join(';')}`);
+    return payload.data || [];
+  }
+
   cancelOrder(intent) {
     return this.request('cancel-order', [{ instId: intent.instId, clOrdId: intent.id.replaceAll('-', '').slice(0, 32) }], `C-${intent.id}`.slice(0, 32));
   }
