@@ -243,17 +243,18 @@ test('OKX 私有 WebSocket 使用交易所要求的签名并默认未连接', ()
 });
 
 test('实盘订单发送合约保护价，并适配双向持仓模式', async () => {
-  let sent;
-  const gateway = new OKXPrivateGateway({ credentials: { apiKey: 'api-key', secretKey: 'secret-key', passphrase: 'passphrase' }, accountId: 'account-1' });
+  let sentBody;
+  const gateway = new OKXPrivateGateway({ credentials: { apiKey: 'api-key', secretKey: 'secret-key', passphrase: 'passphrase' }, accountId: 'account-1', fetchImpl: async (url, opts) => {
+    sentBody = JSON.parse(opts.body);
+    return { json: async () => ({ code: '0', data: [{ sCode: '0', ordId: 'OKX-1' }] }) };
+  } });
   gateway.status = 'connected';
   gateway.accountConfig = { posMode: 'long_short_mode' };
-  gateway.socket = { send: (raw) => { sent = JSON.parse(raw); } };
-  const pending = gateway.placeOrder({ id: 'ORD-123', instId: 'AAPL-USDT-SWAP', side: 'buy', orderType: 'limit', size: 1, price: 224, reduceOnly: false, stopLossPrice: 215, takeProfitPrice: 240 });
-  gateway.handleMessage(JSON.stringify({ id: 'ORD-123', code: '0', data: [{ sCode: '0', ordId: 'OKX-1' }] }));
-  await pending;
-  assert.equal(sent.args[0].posSide, 'long');
-  assert.equal(sent.args[0].attachAlgoOrds[0].slTriggerPx, '215');
-  assert.equal(sent.args[0].attachAlgoOrds[0].tpTriggerPx, '240');
+  const pending = await gateway.placeOrder({ id: 'ORD123', instId: 'AAPL-USDT-SWAP', side: 'buy', orderType: 'limit', size: 1, price: 224, reduceOnly: false, stopLossPrice: 215, takeProfitPrice: 240 });
+  assert.equal(sentBody.posSide, 'long');
+  assert.equal(sentBody.attachAlgoOrds[0].slTriggerPx, '215');
+  assert.equal(sentBody.attachAlgoOrds[0].tpTriggerPx, '240');
+  assert.equal(pending[0].ordId, 'OKX-1');
 });
 
 test('OKX 私有账户事件更新风险权益来源', async () => {

@@ -86,18 +86,21 @@ export class PositionManager {
       const lossPerUnit = price * slPct;
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       // A. 风险预算约束的张数
-      let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
+      let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz + 1e-9) * lotSz;
       // B. 单笔名义上限约束：名义 ≤ 权益 × 100%（用户规则）
       //    SNDK 例外：1张最小名义1735U=372%权益, 用户指定"破例放开"（最强动量+3416%）
       const notionalCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
-      let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
-      // C. 保证金约束（10x 杠杆, 保证金 ≤ 可用×30%）
-      const lever = 10;
+      let qtyB = Math.floor(notionalCap / price / lotSz + 1e-9) * lotSz;
+      // C. 保证金约束（按标的杠杆: SNDK 20x, 其他 10x; 保证金 ≤ 可用×30%）
+      const lever = opp.instId === 'SNDK-USDT-SWAP' ? 20 : 10;
       const marginCap = available * 0.3;
-      let qtyC = Math.floor(marginCap * lever / price / lotSz) * lotSz;
+      let qtyC = Math.floor(marginCap * lever / price / lotSz + 1e-9) * lotSz;
       // 取三者最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
+      // 浮点修正：转字符串去尾（消除 25.700000000000003，OKX 51121 拒单）
+      // round 不够（0.1 进制浮点误差），用 toFixed(6) 后 Number 再按 lotSz 取整
+      qty = Number((Math.floor(qty / lotSz) * lotSz).toFixed(6));
       // 组合预算：已有持仓名义 + 本次 ≤ 权益×100%（SNDK例外5倍）
       const comboCap = opp.instId === 'SNDK-USDT-SWAP' ? equity * 5.0 : equity * 1.0;
       let usedNotional = 0;
@@ -108,7 +111,7 @@ export class PositionManager {
       }
       if (usedNotional + qty * price > comboCap) {
         const remain = Math.max(0, comboCap - usedNotional);
-        qty = Math.floor(remain / price / lotSz) * lotSz;
+        qty = Number((Math.floor(remain / price / lotSz + 1e-9) * lotSz).toFixed(6)); // 浮点修正
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
       // D. 单笔开仓：已有持仓 或 本轮已开过 → 不再开（用户规则：每次只能开一笔）

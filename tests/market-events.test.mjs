@@ -14,6 +14,8 @@ test('事件服务筛选美国高影响宏观事件和候选股票财报', async
   const result = await service.load(['AAPL']);
   assert.equal(result.state, 'live');
   assert.equal(result.macro.length, 1);
-  assert.equal(result.earnings.every((event) => event.symbol === 'AAPL'), true);
+  // 现在返回全部财报（不再过滤，7天×2行=14），earningsMatched 给出候选池匹配
+  assert.equal(result.earnings.length, 14);
+  assert.equal(result.earningsMatched.every((event) => event.symbol === 'AAPL'), true);
   assert.equal(saved.some((event) => event.symbol === 'MSFT'), true);
 });

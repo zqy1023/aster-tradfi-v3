@@ -254,7 +254,13 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       evidence: shortMom ? [`过去${momWin}根4H(≈5日)涨幅 ${(shortMom.momPct * 100).toFixed(2)}%`, '回测: 257笔净+62.5% 胜率65% 杠杆10x(样本短40天)'] : ['4H K线不足，无法计算短周期动量'],
       blockers: shortMom?.ready ? [] : ['4H 动量未达阈值或数据不足'],
     }),
-  ];
+  ].filter((signal) => {
+    // 只保留已启用策略的信号（用户要求：停止旧策略）
+    // context.enabledStrategies: 启用策略的 type 集合（如 ['short_momentum']）
+    const enabled = context.enabledStrategies;
+    if (!enabled || !enabled.length) return true; // 未传则全部保留（兼容测试）
+    return enabled.includes(signal.type);
+  });
 }
 
 function arbitrate(signals) {
@@ -386,7 +392,7 @@ function dedupeTopEquities(decisions) {
   return output.sort((a, b) => b.score - a.score);
 }
 
-export function buildWorkstationSnapshot({ instruments = [], marketItems = [], candleSets = {}, connection = {}, risk = {}, privateData = {}, marketEvents = {}, liveTrading = false, nowMs = Date.now(), momentumRank = null } = {}) {
+export function buildWorkstationSnapshot({ instruments = [], marketItems = [], candleSets = {}, connection = {}, risk = {}, privateData = {}, marketEvents = {}, liveTrading = false, nowMs = Date.now(), momentumRank = null, enabledStrategies = null } = {}) {
   const snapshotById = new Map(marketItems.map((item) => [item.instId, item]));
   const tradfi = instruments.filter((instrument) => instrument.assetClass === 'equity' && String(instrument.instId).endsWith('-USDT-SWAP'));
   const rows = tradfi.map((instrument) => ({
@@ -405,7 +411,7 @@ export function buildWorkstationSnapshot({ instruments = [], marketItems = [], c
       if (mom) momentumMap.set(instId, { ...mom, source: 'yahoo-daily-proxy' });
     }
   }
-  const decisions = rows.map((row) => buildInstrumentDecision(row, { momentum: momentumMap.get(row.instrument.instId) || null }));
+  const decisions = rows.map((row) => buildInstrumentDecision(row, { momentum: momentumMap.get(row.instrument.instId) || null, enabledStrategies }));
   // 只保留有现货代理动量的标的：无排名的（不在代理池/数据不足）不进入机会列表，避免"K线不足"鸡肋
   const decisionsWithMomentum = decisions.filter((item) => {
     const momSignal = (item.signals || []).find((s) => s.type === 'momentum_select');
@@ -476,8 +482,8 @@ export function buildWorkstationSnapshot({ instruments = [], marketItems = [], c
       decision: item.arbitration.label,
     })),
     macro: [
-      { name: 'CPI / 非农 / FOMC', state: nextMacro ? 'live' : marketEvents.state || 'disconnected', action: nextMacro ? `${new Date(nextMacro.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })} · ${nextMacro.title} · ${nextMacro.impact}` : `本周无匹配事件${marketEvents.errors?.length ? `；${marketEvents.errors.join('；')}` : ''}` },
-      { name: '财报日历', state: nextEarnings ? 'live' : marketEvents.state || 'disconnected', action: nextEarnings ? `${new Date(nextEarnings.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })} · ${nextEarnings.title}` : '未来7天当前候选池未发现财报事件' },
+      { name: 'CPI / 非农 / FOMC', state: nextMacro ? 'live' : (marketEvents.macroState === 'error' ? 'error' : 'empty'), action: nextMacro ? `${new Date(nextMacro.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })} · ${nextMacro.title} · ${nextMacro.impact}` : (marketEvents.macroState === 'error' ? `宏观数据源暂不可用${marketEvents.errors?.filter((e) => e.includes('宏观')).map((e) => `（${e}）`).join('') || ''}` : '本周无美国高影响宏观事件') },
+      { name: '财报日历', state: nextEarnings ? 'live' : (marketEvents.earningsState === 'error' ? 'error' : 'empty'), action: nextEarnings ? `${new Date(nextEarnings.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })} · ${nextEarnings.title}` : (marketEvents.earningsState === 'error' ? `财报数据源暂不可用${marketEvents.errors?.filter((e) => e.includes('财报')).map((e) => `（${e}）`).join('') || ''}` : '未来7天无财报事件') },
       { name: 'OKX 资金费', state: fundingItems.length ? 'live' : connected ? 'partial' : 'disconnected', action: fundingItems.length ? fundingItems.map((item) => `${item.instId} ${(Number(item.fundingRate) * 100).toFixed(4)}%`).join(' · ') : 'OKX 暂未向当前候选返回 funding-rate，预检继续使用保守成本上限' },
     ],
   };

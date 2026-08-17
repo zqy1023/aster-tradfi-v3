@@ -34,7 +34,9 @@ export class MarketEventService {
     if (!this.cache || now.getTime() - this.cache.loadedAt > ttlMs) this.cache = await this.refresh(now);
     return {
       ...this.cache,
-      earnings: this.cache.earnings.filter((event) => !wanted.size || wanted.has(event.symbol)),
+      // 财报返回全部（前端自行标注哪些匹配候选池）；候选池匹配数量单独给出
+      earnings: this.cache.earnings,
+      earningsMatched: wanted.size ? this.cache.earnings.filter((event) => wanted.has(event.symbol)) : [],
     };
   }
 
@@ -44,7 +46,9 @@ export class MarketEventService {
     let macro = [];
     let earnings = [];
     try {
-      const rows = await this.fetchJson(MACRO_URL);
+      // 宏观源：faireconomy 需要浏览器 UA（429 限流时重试一次）
+      const rows = await this.fetchJson(MACRO_URL, { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' })
+        .catch(async () => this.fetchJson(MACRO_URL, { 'user-agent': 'Mozilla/5.0 ASTER-TradFi/3.0' }));
       const important = /CPI|Consumer Price|Non-Farm|Employment|FOMC|Federal Reserve|Fed Chair|PCE|GDP/i;
       macro = (Array.isArray(rows) ? rows : []).filter((row) => row.country === 'USD' && (row.impact === 'High' || important.test(String(row.title || '')))).map((row) => ({
         key: keyFor('macro', row.title, row.date), type: 'macro', symbol: null, title: String(row.title || '美国宏观事件'), time: new Date(row.date).toISOString(), impact: String(row.impact || ''), forecast: String(row.forecast || ''), previous: String(row.previous || ''), source: 'faireconomy-calendar', recvTs, raw: row,
@@ -66,6 +70,10 @@ export class MarketEventService {
     earnings = [...new Map(earnings.map((event) => [event.key, event])).values()];
     const all = [...macro, ...earnings];
     if (this.repository && all.length) await this.repository.saveMarketEvents(all).catch((error) => errors.push(`事件入库：${error.message}`));
-    return { loadedAt: now.getTime(), generatedAt: recvTs, macro, earnings, state: all.length ? (errors.length ? 'partial' : 'live') : 'disconnected', errors };
+    // 状态语义：live=至少一个源有数据且无错误；partial=有数据但有源失败；disconnected=全失败
+    const macroOk = !errors.some((e) => e.includes('宏观'));
+    const earningsOk = !errors.some((e) => e.includes('财报'));
+    const state = all.length ? (errors.length ? 'partial' : 'live') : 'disconnected';
+    return { loadedAt: now.getTime(), generatedAt: recvTs, macro, earnings, state, macroState: macroOk ? (macro.length ? 'live' : 'empty') : 'error', earningsState: earningsOk ? (earnings.length ? 'live' : 'empty') : 'error', errors };
   }
 }

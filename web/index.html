@@ -83,7 +83,7 @@
     .health-list{display:grid;gap:8px}.health-row{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:start;padding:8px;border:1px solid var(--line-soft);border-radius:5px;background:var(--panel-2)}
     .health-row strong{font-weight:600}.health-row small{display:block;color:var(--muted);margin-top:3px;line-height:1.35}
     .opportunity-list{display:grid;gap:8px}
-    .opp{width:100%;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;padding:11px;text-align:left;display:grid;gap:9px}
+    .opp{width:100%;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;padding:9px 11px;text-align:left;display:grid;gap:7px}
     .opp:hover,.opp.active{border-color:var(--cyan);background:#1b2229}
     .opp-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.opp-title strong{display:block;font-size:15px}.opp-title small{display:block;color:var(--muted);margin-top:3px}
     .opp-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.opp-meta div{background:#0d1116;border:1px solid var(--line-soft);border-radius:4px;padding:6px}.opp-meta span{display:block;color:var(--faint);font-size:10px}.opp-meta b{display:block;margin-top:4px;font-weight:600}
@@ -229,7 +229,7 @@
     const toast = (message) => { const node = $('#toast'); node.textContent = message; node.hidden = false; clearTimeout(node.timer); node.timer = setTimeout(() => node.hidden = true, 3600); };
     // 机会卡交易计划样式（现价/进场/止损/止盈 4 列）
     const style = document.createElement('style');
-    style.textContent = '.opp-plan{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)}.opp-plan div{display:flex;flex-direction:column;gap:2px}.opp-plan span{font-size:11px;color:var(--muted)}.opp-plan b{font-size:12px;color:#dbe4ec}';
+    style.textContent = '.opp-plan{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line-soft)}.opp-plan div{display:flex;flex-direction:column;gap:2px}.opp-plan span{font-size:10px;color:var(--muted)}.opp-plan b{font-size:13px;color:#dbe4ec}';
     document.head.appendChild(style);
     const dotClass = (stateValue) => stateValue === 'live' || stateValue === 'connected' || stateValue === 'normal' || stateValue === 'live/partial' ? '' : stateValue === 'partial' || stateValue === 'waiting' || stateValue === 'stale' ? 'warn' : 'bad';
     // 状态值中文化：后端返回英文枚举，前端渲染时统一翻译

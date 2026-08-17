@@ -98,6 +98,15 @@ export class StrategyManager {
     return strategies;
   }
 
+  // 返回启用策略的 type/style 集合（信号引擎按此过滤：disabled 策略不参与仲裁）
+  enabledTypes() {
+    const types = [];
+    for (const [key, item] of this.catalog) {
+      if (item.status === 'enabled') types.push(item.style || key);
+    }
+    return types;
+  }
+
   async setEnabled(principal, key, enabled) {
     if (!this.catalog.has(key)) throw new Error('策略不存在');
     const row = await this.repository?.upsertStrategy({
