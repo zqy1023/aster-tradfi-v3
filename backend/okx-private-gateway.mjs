@@ -122,8 +122,10 @@ export class OKXPrivateGateway {
       this.privateGet('/api/v5/account/balance'),
       this.privateGet('/api/v5/account/positions'),
       this.privateGet('/api/v5/trade/orders-pending'),
-      this.privateGet('/api/v5/trade/fills-history?instType=SWAP&limit=100'),
-      this.privateGet('/api/v5/trade/fills-history?instType=FUTURES&limit=100'),
+      // 只拉最近24h成交(防止历史事故噪音反复同步进DB/诊断)
+      // 2026-08-18: 事故成交(08-17 1637次auto_reduce)被reconcile反复拉回, 污染诊断
+      this.privateGet(`/api/v5/trade/fills-history?instType=SWAP&limit=100&begin=${Date.now() - 24 * 3600_000}&end=${Date.now()}`),
+      this.privateGet(`/api/v5/trade/fills-history?instType=FUTURES&limit=100&begin=${Date.now() - 24 * 3600_000}&end=${Date.now()}`),
     ]);
     this.accountConfig = accountConfig[0] || null;
     const emit = (channel, data) => this.onEvent({ accountId: this.accountId, source: 'okx-rest-reconcile', recvTs, payload: { arg: { channel }, data } });
