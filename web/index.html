@@ -312,7 +312,10 @@
     function renderOpportunities() {
       const items = state.workstation.opportunities || [];
       $('#opportunity-count').textContent = `${items.length} 个候选`;
-      $('#opportunity-list').innerHTML = items.length ? items.map(item => `
+      $('#opportunity-list').innerHTML = items.length ? items.map(item => {
+        const mom = item.momentum;
+        const momTag = mom ? `<span class="chip" title="12月动量排名（${mom.source === 'yahoo-daily-proxy' ? '现货代理' : 'OKX'}）">动量 #${mom.rank}/${mom.total}</span>` : '';
+        return `
         <button class="opp ${item.instId === state.selectedInst ? 'active' : ''}" data-inst="${esc(item.instId)}" style="--score:${item.score}">
           <div class="opp-top"><div class="opp-title"><strong>${esc(item.underlying)} · ${esc(item.state)}</strong><small>${esc(item.instId)}</small></div><div class="score num" title="${esc((item.scoreBasis || []).join('；'))}">${item.score}</div></div>
           <div class="opp-meta">
@@ -321,8 +324,10 @@
             <div><span>成交额</span><b class="num">${fmt(item.volume24h, 0)}</b></div>
             <div><span>仲裁</span><b>${esc(item.arbitration.label)}</b></div>
           </div>
+          <div class="opp-meta" style="margin-top:4px">${momTag || '<span class="chip">无现货代理</span>'}</div>
           <div class="trigger-line"><strong>${esc(item.trigger?.label || '等待触发计算')}</strong><span class="muted">${esc(item.trigger?.blockers?.[0] || '条件已满足')}</span></div>
-        </button>`).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
+        </button>`;
+      }).join('') : '<div class="empty"><strong>等待 OKX TradFi 股票合约</strong>系统只按交易所返回的合约池生成候选。</div>';
       $$('.opp').forEach(button => button.addEventListener('click', () => selectInstrument(button.dataset.inst, { goCockpit: false })));
     }
 

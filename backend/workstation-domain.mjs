@@ -201,12 +201,12 @@ function buildSignals(instrument, snapshot, candleSet, context = {}) {
       ],
       triggerDistancePct: null,
       evidence: [
-        return12m !== null ? `过去12月收益 ${(return12m * 100).toFixed(1)}%` : '12月收益数据不足',
-        rank !== null ? `横截面动量排名 ${rank}/${total}` : '样本不足，无法横截面排名',
+        return12m !== null ? `过去12月收益 ${(return12m * 100).toFixed(1)}%（${mom.source === 'yahoo-daily-proxy' ? '现货代理' : 'OKX'}数据）` : '12月收益数据不足',
+        rank !== null ? `横截面动量排名 ${rank}/${total}` : '不在现货代理池，无法横截面排名',
         '月度调仓：月末按动量重排 Top3-5（回测年化73% Sharpe 1.42）',
       ],
       blockers: [
-        ...(rank === null ? ['12月K线不足，无法计算动量'] : []),
+        ...(rank === null ? ['不在现货代理池（Yahoo 5年日线），无法计算 12 月动量'] : []),
         ...(!momTop ? [`动量排名 ${rank ?? '--'}/${total ?? '--'}，未进入 Top 池`] : []),
       ],
     }),
@@ -333,6 +333,12 @@ function buildInstrumentDecision(row, context = {}) {
       blockers: [...new Set(signals.flatMap((signal) => signal.blockers || []))].slice(0, 6),
     },
     funding: row.snapshot?.funding || null,
+    momentum: (context.momentum && (context.momentum.rank !== null || context.momentum.rank !== undefined)) ? {
+      rank: context.momentum.rank,
+      total: context.momentum.total,
+      return12m: context.momentum.return12m,
+      source: context.momentum.source || 'okx',
+    } : null,
     signals,
     arbitration,
     plan,
@@ -352,7 +358,7 @@ function dedupeTopEquities(decisions) {
   return output.sort((a, b) => b.score - a.score);
 }
 
-export function buildWorkstationSnapshot({ instruments = [], marketItems = [], candleSets = {}, connection = {}, risk = {}, privateData = {}, marketEvents = {}, liveTrading = false, nowMs = Date.now() } = {}) {
+export function buildWorkstationSnapshot({ instruments = [], marketItems = [], candleSets = {}, connection = {}, risk = {}, privateData = {}, marketEvents = {}, liveTrading = false, nowMs = Date.now(), momentumRank = null } = {}) {
   const snapshotById = new Map(marketItems.map((item) => [item.instId, item]));
   const tradfi = instruments.filter((instrument) => instrument.assetClass === 'equity' && String(instrument.instId).endsWith('-USDT-SWAP'));
   const rows = tradfi.map((instrument) => ({
@@ -360,22 +366,24 @@ export function buildWorkstationSnapshot({ instruments = [], marketItems = [], c
     snapshot: snapshotById.get(instrument.instId) || {},
     candleSet: candleSets[instrument.instId] || { default: [] },
   })).filter((row) => row.instrument.instId);
-  // —— 横截面 12 月动量排名（每月末调仓逻辑的实时代理：当前动量即未来一个月持仓依据）——
+  // —— 横截面 12 月动量排名 ——
+  // 方案B：OKX 永续历史不足 260 根，改用 Yahoo 现货日线代理（EquityMomentumSource）
+  // 映射：NVDA-USDT-SWAP → NVDA 现货；无映射的标的(如 SNXX)无排名，显示"不在现货池"
   const momentumMap = new Map();
-  const momRows = rows.map((row) => {
-    const candles = row.candleSet['1D'] || [];
-    const closes = candles.filter((c) => Number.isFinite(Number(c.close))).map((c) => Number(c.close));
-    if (closes.length < 260) return { instId: row.instrument.instId, ret12m: null };
-    const start = closes[closes.length - 252]; // 约12个月前的收盘
-    const end = closes.at(-1);
-    return { instId: row.instrument.instId, ret12m: start > 0 ? end / start - 1 : null };
-  }).filter((m) => m.ret12m !== null && Number.isFinite(m.ret12m));
-  momRows.sort((a, b) => b.ret12m - a.ret12m);
-  momRows.forEach((m, idx) => {
-    momentumMap.set(m.instId, { rank: idx + 1, total: momRows.length, return12m: m.ret12m });
-  });
+  if (momentumRank && momentumRank.size) {
+    for (const [instId, inst] of rows.map((r) => [r.instrument.instId, r.instrument])) {
+      const sym = String(instId).replace(/-USDT-SWAP$/, '');
+      const mom = momentumRank.get(sym);
+      if (mom) momentumMap.set(instId, { ...mom, source: 'yahoo-daily-proxy' });
+    }
+  }
   const decisions = rows.map((row) => buildInstrumentDecision(row, { momentum: momentumMap.get(row.instrument.instId) || null }));
-  const opportunities = dedupeTopEquities(decisions);
+  // 只保留有现货代理动量的标的：无排名的（不在代理池/数据不足）不进入机会列表，避免"K线不足"鸡肋
+  const decisionsWithMomentum = decisions.filter((item) => {
+    const momSignal = (item.signals || []).find((s) => s.type === 'momentum_select');
+    return momSignal && momSignal.scoreBasis && momSignal.scoreBasis.some((b) => b.includes('排名'));
+  });
+  const opportunities = dedupeTopEquities(decisionsWithMomentum.length ? decisionsWithMomentum : decisions);
   const session = marketSession(nowMs);
   const readyCount = decisions.filter((item) => item.arbitration.decision.startsWith('final')).length;
   const connected = connection.status === 'connected';

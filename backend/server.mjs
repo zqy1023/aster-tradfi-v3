@@ -19,6 +19,7 @@ import { AuthService } from './auth-service.mjs';
 import { buildWorkstationSnapshot, buildReview } from './workstation-domain.mjs';
 import { MarketEventService } from './market-events.mjs';
 import { StrategyManager } from './strategy-manager.mjs';
+import { EquityMomentumSource } from './equity-momentum-source.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const webDir = join(rootDir, 'web');
@@ -35,6 +36,8 @@ const credentialVault = process.env.V3_CREDENTIAL_KEY ? new CredentialVault(proc
 const domainRepository = process.env.V3_DB_ENABLED === 'true' ? new MySQLTradFiRepository(repository.pool) : null;
 const liveMarketEnabled = process.env.OKX_WS_ENABLED === 'true';
 const domain = new TradFiDomain({ credentialVault, repository: domainRepository, gateway: liveMarketEnabled });
+const momentumSource = new EquityMomentumSource();
+momentumSource.load().catch((error) => console.error('[momentum-source] 加载失败', error.message));
 const marketEventService = new MarketEventService({ repository: domainRepository });
 const strategyManager = new StrategyManager({ repository: domainRepository });
 
@@ -166,6 +169,7 @@ async function pushOverview(principal) {
     default: domain.getCandles(item.instId, '15m').slice(-240).map(stripCandleRaw),
   }]));
   const risk = await domain.riskOverview(principal);
+  const momentumRank = momentumSource.rankMomentum();
   const snapshot = buildWorkstationSnapshot({
     instruments,
     marketItems,
@@ -175,6 +179,7 @@ async function pushOverview(principal) {
     privateData: { source: 'okx-private-ws', fills: [], exchangeOrders: [], positions: [], intents: [], review: { summary: {}, attribution: [], trades: [], nextActions: [] } },
     marketEvents: {},
     liveTrading: process.env.OKX_TRADING_ENABLED === 'true',
+    momentumRank,
   });
   const payload = {
     type: 'overview',
@@ -368,6 +373,7 @@ async function buildWorkstation(principal) {
     privateData,
     marketEvents,
     liveTrading: process.env.OKX_TRADING_ENABLED === 'true',
+    momentumRank: momentumSource.rankMomentum(),
   });
 }
 
