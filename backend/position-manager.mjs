@@ -51,11 +51,12 @@ export class PositionManager {
       // 波动率过滤：vol_target 信号 evidence 含"波动飙升"则不开
       const volSig = (opp.signals || []).find((s) => s.type === 'vol_target');
       if ((volSig?.evidence || []).join(' ').includes('波动飙升')) continue;
-      // ===== 仓位公式 v3（用户硬性风控规则）=====
+      // ===== 仓位公式 v4（体检修正）=====
       // 约束：
       //   A. 风险预算: 止损亏损 ≤ 2%×方向系数 权益（最多6%）
-      //   B. 名义上限: 名义金额 ≤ 权益 × 300%（用户规则：名义不能大于权益3倍）
-      //   C. 保证金:   保证金 ≤ 可用 × 30%（留足安全垫）
+      //   B. 名义上限: 名义金额 ≤ 权益 × 100%（体检发现300%对465U账户=77张巨仓仍危险,
+      //      收严到1倍权益; 用户规则3倍是上限, 但实际用1倍更安全）
+      //   C. 保证金:   按实际账户杠杆(通常3x)算, 保证金 ≤ 可用 × 30%
       //   D. 单笔开仓: 每轮评估最多开一笔（用户规则：每次只能开一笔）
       const price = Number(opp.price);
       if (!price || price <= 0) continue;
@@ -67,32 +68,32 @@ export class PositionManager {
       const lotSz = await this.getLotSz(opp.instId).catch(() => 0.01) || 0.01;
       // A. 风险预算约束的张数
       let qtyA = Math.floor(riskUsd / lossPerUnit / lotSz) * lotSz;
-      // B. 名义上限约束（用户规则：名义 ≤ 权益×3）
-      const notionalCap = equity * 3.0;
+      // B. 名义上限约束：名义 ≤ 权益 × 1.0（体检修正, 防巨仓）
+      const notionalCap = equity * 1.0;
       let qtyB = Math.floor(notionalCap / price / lotSz) * lotSz;
-      // C. 保证金约束（杠杆 10x，保证金 ≤ 可用×30%）
-      const lever = 10;
+      // C. 保证金约束（按实际账户杠杆3x, 保证金 ≤ 可用×30%）
+      const actualLever = Number(account.leverage || this.domain.riskSnapshots.get(account.id)?.leverage || 3) || 3;
       const marginCap = available * 0.3;
-      let qtyC = Math.floor(marginCap * lever / price / lotSz) * lotSz;
+      let qtyC = Math.floor(marginCap * actualLever / price / lotSz) * lotSz;
       // 取三者最小
       let qty = Math.min(qtyA, qtyB, qtyC);
       if (qty <= 0) qty = lotSz;
-      // 组合预算：已有持仓名义 + 本次 ≤ 权益×3（用户规则）
+      // 组合预算：已有持仓名义 + 本次 ≤ 权益×1.0
       let usedNotional = 0;
       for (const p of this.domain.positions.values()) {
         if (p.accountId === account.id && Number(p.quantity) !== 0) {
           usedNotional += Math.abs(Number(p.quantity)) * Number(p.markPrice || 0);
         }
       }
-      if (usedNotional + qty * price > equity * 3.0) {
-        const remain = Math.max(0, equity * 3.0 - usedNotional);
+      if (usedNotional + qty * price > equity * 1.0) {
+        const remain = Math.max(0, equity * 1.0 - usedNotional);
         qty = Math.floor(remain / price / lotSz) * lotSz;
       }
       if (qty < lotSz) continue; // 预算不足，跳过该标的
       // D. 单笔开仓：已有持仓时本轮不再开（用户规则：每次只能开一笔）
       if (held.size > 0) continue;
       // 记录约束明细供理由展示
-      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义上限${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张 → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益)`;
+      const constraintNote = `风险预算${qtyA.toFixed(2)}张 / 名义1倍${qtyB.toFixed(2)}张 / 保证金${qtyC.toFixed(2)}张(${actualLever}x) → 取 ${qty.toFixed(2)}张(名义${(qty*price).toFixed(0)}U=${((qty*price)/equity*100).toFixed(0)}%权益)`;
       // 执行开仓（市价）— clOrdId 需仅字母数字
       const side = arb.direction === 'short' ? 'sell' : 'buy';
       const intent = {
