@@ -48,6 +48,43 @@ if (positions.length) {
   lines.push('📦 持仓: 无');
 }
 
+// ===== 今日交易复盘（用户要求每日复盘）=====
+lines.push('━━━━━━━━━━━━━━━━');
+lines.push('🔍 今日复盘:');
+if (fills.length) {
+  // 按标的分组统计
+  const byInst = {};
+  for (const f of fills) {
+    const inst = f.instId;
+    byInst[inst] = byInst[inst] || { buys: 0, sells: 0, fee: 0, size: 0 };
+    if (f.side === 'buy') byInst[inst].buys += Math.abs(Number(f.size) || 0);
+    else byInst[inst].sells += Math.abs(Number(f.size) || 0);
+    byInst[inst].fee += Math.abs(Number(f.fee) || 0);
+    byInst[inst].size += Math.abs(Number(f.size) || 0);
+  }
+  for (const [inst, v] of Object.entries(byInst)) {
+    const net = v.sells - v.buys; // 净平仓方向
+    let action = '持有/调仓';
+    if (v.buys > 0 && v.sells === 0) action = '加仓/开仓';
+    else if (v.sells > 0 && v.buys === 0) action = '减仓/平仓';
+    else if (v.buys > 0 && v.sells > 0) action = '开平都有';
+    lines.push(`  ${inst}: ${action} 买${v.buys.toFixed(1)}/卖${v.sells.toFixed(1)} 手续费${v.fee.toFixed(2)}U`);
+  }
+  // 复盘结论
+  const totalFee = Object.values(byInst).reduce((s, v) => s + v.fee, 0);
+  if (totalFee > 5) lines.push(`  ⚠️ 今日手续费 ${totalFee.toFixed(2)}U 偏高，检查是否频繁调仓`);
+  else if (totalFee > 0) lines.push(`  ✅ 今日手续费 ${totalFee.toFixed(2)}U 可控`);
+} else {
+  lines.push('  今日无成交，持仓持有中');
+}
+// 持仓复盘: 每仓逻辑是否符合策略
+for (const p of positions) {
+  const pnl = Number(p.unrealizedPnl || 0);
+  const pnlPct = p.avgEntryPrice ? pnl / (Math.abs(Number(p.quantity)) * Number(p.avgEntryPrice)) * 100 : 0;
+  if (pnl > 0) lines.push(`  ✅ ${p.instId} 浮盈 ${pnl.toFixed(2)}U (${pnlPct.toFixed(1)}%)，按策略持有`);
+  else if (pnl < 0) lines.push(`  ⚠️ ${p.instId} 浮亏 ${pnl.toFixed(2)}U (${pnlPct.toFixed(1)}%)，止损${Number(p.avgEntryPrice) * 0.85 > Number(p.markPrice) ? '临近' : '有空间'}，继续按策略`);
+}
+
 // 信号状态
 lines.push('━━━━━━━━━━━━━━━━');
 lines.push('📡 策略信号:');
@@ -66,7 +103,7 @@ lines.push('📌 明日计划:');
 if (positions.length === 0 && rmReady.length) {
   lines.push(`  ${rmReady[0].instId} 等动量#1/2 信号 ready → 按滚仓v5开仓`);
 } else if (positions.length) {
-  lines.push('  持有中: 按 15%止损/80%止盈/10天持仓 管理');
+  lines.push('  持有中: 按 15%止损/40%止盈/10天持仓 管理');
 } else {
   lines.push('  空仓等待信号');
 }
